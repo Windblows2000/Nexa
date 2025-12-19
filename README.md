@@ -18,6 +18,7 @@ A modern media controller written in Rust. This project was born out of the desi
   nexa command volume --set 0.60 #sets audio to 60%
   nexa command play-pause #Play/Pause the media
   nexa metadata #Prints out metadata in json
+  nexa metadata --format '{artist} - {title}' #Playerctl-like output
   nexad #Starts the daemon.
   ```
 
