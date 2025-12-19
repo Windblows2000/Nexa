@@ -1,7 +1,7 @@
 // Copyright (C) 2025 Windblows2000
-// This file is part of rusty-player.
+// This file is part of nexa.
 //
-// rusty-player is free software: you can redistribute it and/or modify
+// nexa is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
@@ -73,15 +73,15 @@ pub fn decode_response(bytes: &[u8]) -> anyhow::Result<Response> {
 /// Uses $XDG_RUNTIME_DIR if available; otherwise falls back to a per-user cache dir.
 pub fn socket_path() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(dir).join("rusty-player").join("daemon.sock");
+        return PathBuf::from(dir).join("nexa").join("daemon.sock");
     }
 
     // Fall back to a stable per-user cache directory.
-    if let Some(p) = ProjectDirs::from("", "", "rusty-player") {
+    if let Some(p) = ProjectDirs::from("", "", "nexa") {
         return p.cache_dir().join("daemon.sock");
     }
 
-    PathBuf::from("/tmp/rusty-player-daemon.sock")
+    PathBuf::from("/tmp/nexa-daemon.sock")
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
