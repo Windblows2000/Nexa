@@ -32,15 +32,15 @@ pub struct ImageCache {
 impl ImageCache {
     pub fn new() -> Result<Self> {
         let proj = ProjectDirs::from("com", "windblows2000", "nexa")
-        .context("cannot determine cache dir")?;
+            .context("cannot determine cache dir")?;
 
         let root = proj.cache_dir().join("art");
 
         Ok(Self {
             root,
             client: reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()?,
+                .timeout(Duration::from_secs(10))
+                .build()?,
         })
     }
 
@@ -104,13 +104,13 @@ impl ImageCache {
 
         // ---- download ----
         let bytes = self
-        .client
-        .get(url)
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
+            .client
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
 
         // ---- atomic write ----
         let tmp = path.with_extension("tmp");

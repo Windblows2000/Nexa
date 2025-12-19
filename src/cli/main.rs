@@ -36,8 +36,7 @@ async fn main() -> Result<()> {
     }
 
     // ---- build IPC request ----
-    let req =
-        nexa::cli::to_request(&cli)?.expect("non-cache commands must produce a request");
+    let req = nexa::cli::to_request(&cli)?.expect("non-cache commands must produce a request");
 
     let stream = UnixStream::connect(socket_path())
         .await
