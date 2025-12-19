@@ -14,19 +14,42 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+//! Public IPC API (v1).
+//!
+//! This module defines the stable, additive-only protocol
+//! used by external clients (CLI, GUI, third-party tools).
+
+use crate::ipc::version::PROTOCOL_VERSION;
 use clap::ValueEnum;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use tokio::net::UnixStream;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use anyhow::Result;
 use std::path::PathBuf;
 
-pub mod transport;
-pub const PROTOCOL_VERSION: u16 = 1;
+pub mod capabilities;
+pub mod control;
+pub mod events;
+pub mod handshake;
+pub mod snapshot;
+mod transport;
+pub mod version;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Envelope<T> {
     version: u16,
     payload: T,
 }
+
+pub async fn send(
+    framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
+    resp: Response,
+) -> Result<()> {
+    transport::send(framed, resp).await
+}
+
+
 
 pub fn encode_request(req: &Request) -> anyhow::Result<Vec<u8>> {
     let env = Envelope {
