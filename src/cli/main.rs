@@ -20,7 +20,7 @@ use futures::{SinkExt, StreamExt};
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-use nexa::cli::{Cli, Cmd, OutputMode};
+use nexa::cli::{Cli, Cmd};
 use nexa::ipc::{Response, decode_response, encode_request, socket_path};
 use nexa::utils::init_logging;
 
@@ -45,23 +45,13 @@ async fn main() -> Result<()> {
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
     framed.send(encode_request(&req)?.into()).await?;
 
-    // ---- output mode resolution ----
-    let (output_mode, template) = match &cli.cmd {
-        Cmd::Metadata { out, format, .. } => (
-            out.resolve(OutputMode::Json, format.is_some()),
-            format.as_deref(),
-        ),
+    // ---- output selection ----
+    let (template, toml) = match &cli.cmd {
+        Cmd::Metadata { out, .. } | Cmd::Follow { out, .. } => (out.format.as_deref(), out.toml),
 
-        Cmd::Follow { out, format, .. } => (
-            out.resolve(OutputMode::Json, format.is_some()),
-            format.as_deref(),
-        ),
+        Cmd::Status { out, .. } | Cmd::List { out, .. } => (None, out.toml),
 
-        Cmd::Status { out, .. } | Cmd::List { out, .. } => {
-            (out.resolve(OutputMode::Json, false), None)
-        }
-
-        _ => (OutputMode::Text, None),
+        _ => (None, false),
     };
 
     // ---- response loop ----
@@ -70,7 +60,7 @@ async fn main() -> Result<()> {
 
         match resp {
             Response::Metadata(snap) => {
-                nexa::cli::print_metadata(&snap, template, output_mode)?;
+                nexa::cli::print_metadata(&snap, template, toml)?;
             }
 
             Response::Status(s) => {
