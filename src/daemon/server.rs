@@ -25,7 +25,7 @@ use crate::{
     cache::ImageCache,
     control::emit_snapshot,
     daemon::state::SharedState,
-    ipc::{CompatMode, Request, Target, decode_request, socket_path, send},
+    ipc::{CompatMode, Request, Target, decode_request, send, socket_path},
 };
 
 pub async fn run(

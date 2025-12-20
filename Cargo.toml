@@ -1,5 +1,7 @@
 [package]
 name = "nexa"
+description = "A Powerful, Rust-Based CLI Linux Tool for your Media Needs."
+repository = "https://github.com/Windblows2000/Nexa"
 version = "1.0.0"
 edition = "2024"
 license = "GPL-3.0-or-later"

@@ -1,4 +1,3 @@
-use bincode;
 use nexa::ipc::handshake::Handshake;
 use nexa::ipc::version::PROTOCOL_VERSION;
 

@@ -20,13 +20,13 @@
 //! used by external clients (CLI, GUI, third-party tools).
 
 use crate::ipc::version::PROTOCOL_VERSION;
+use anyhow::Result;
 use clap::ValueEnum;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use anyhow::Result;
-use std::path::PathBuf;
 
 pub mod capabilities;
 pub mod control;
@@ -48,8 +48,6 @@ pub async fn send(
 ) -> Result<()> {
     transport::send(framed, resp).await
 }
-
-
 
 pub fn encode_request(req: &Request) -> anyhow::Result<Vec<u8>> {
     let env = Envelope {

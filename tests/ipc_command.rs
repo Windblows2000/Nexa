@@ -1,4 +1,3 @@
-use bincode;
 use nexa::ipc::control::Command;
 
 #[test]
