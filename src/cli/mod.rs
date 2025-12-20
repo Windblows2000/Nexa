@@ -26,50 +26,33 @@ use crate::ipc::{Command, LoopState, PlayerSnapshotOut, Request, ShuffleState, T
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
+    Text,
     Json,
     Toml,
 }
 
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Debug, Clone, Copy)]
 pub struct OutputArgs {
-    /// Template for text output
-    #[arg(
-        long,
-        value_name = "TEMPLATE",
-        conflicts_with = "toml",
-        help = "Template for text output (see FORMAT FIELDS below)"
-    )]
-    pub format: Option<String>,
-
-    /// Output metadata as TOML
-    #[arg(long)]
+    /// Force TOML output
+    #[arg(long, conflicts_with = "output")]
     pub toml: bool,
+
+    /// Explicit output mode
+    #[arg(long, value_enum)]
+    pub output: Option<OutputMode>,
 }
 
-const FORMAT_FIELDS_HELP: &str = r#"
-FORMAT FIELDS:
-    {title}      Track title (empty if unavailable)
-    {artist}     Track artist (empty if unavailable)
-    {album}      Album name (empty if unavailable)
-
-    {status}     Playback status (Playing, Paused, Stopped)
-    {player}     MPRIS player identifier
-
-    {elapsed}    Elapsed playback time (MM:SS)
-    {length}     Total track length (MM:SS)
-
-    {rate}       Playback rate (e.g. 1.0)
-    {volume}     Volume level (0.0–1.0)
-
-    {shuffle}    Shuffle state (On, Off, or empty)
-    {loop}       Loop mode (None, Track, Playlist, or empty)
-
-    {art_url}    Artwork URL
-    {art_path}   Local artwork path
-
-    EXAMPLE:
-    nexa metadata --format '{status} [{elapsed}/{length}] {artist} - {title}'
-"#;
+impl OutputArgs {
+    pub fn resolve(&self, default: OutputMode, has_format: bool) -> OutputMode {
+        if self.toml {
+            OutputMode::Toml
+        } else if has_format {
+            OutputMode::Text
+        } else {
+            self.output.unwrap_or(default)
+        }
+    }
+}
 
 //
 // ===== CLI =====
@@ -111,20 +94,26 @@ pub enum Cmd {
     },
 
     /// Print current metadata once.
-    #[command(after_help = FORMAT_FIELDS_HELP)]
     Metadata {
         #[arg(long, default_value = "best")]
         player: String,
+
+        /// Template for text output
+        #[arg(long)]
+        format: Option<String>,
 
         #[command(flatten)]
         out: OutputArgs,
     },
 
     /// Stream metadata updates.
-    #[command(after_help = FORMAT_FIELDS_HELP)]
     Follow {
         #[arg(long, default_value = "best")]
         player: String,
+
+        /// Template for text output
+        #[arg(long)]
+        format: Option<String>,
 
         #[command(flatten)]
         out: OutputArgs,
@@ -228,15 +217,15 @@ pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
             target: parse_selector(player)?,
         },
 
-        Cmd::Metadata { player, out } => Request::Metadata {
+        Cmd::Metadata { player, format, .. } => Request::Metadata {
             target: parse_selector(player)?,
-            format: out.format.clone(),
+            format: format.clone(),
             compat: None,
         },
 
-        Cmd::Follow { player, out } => Request::Follow {
+        Cmd::Follow { player, format, .. } => Request::Follow {
             target: parse_selector(player)?,
-            format: out.format.clone(),
+            format: format.clone(),
             compat: None,
         },
 
@@ -277,14 +266,21 @@ pub async fn handle_cache(cmd: CacheCmd) -> Result<()> {
 // ===== Output =====
 //
 
-pub fn print_metadata(snap: &PlayerSnapshotOut, format: Option<&str>, toml: bool) -> Result<()> {
-    if let Some(tpl) = format {
-        let out = crate::output::format_template(tpl, snap);
-        println!("{out}");
-    } else if toml {
-        println!("{}", toml::to_string(snap)?);
-    } else {
-        println!("{}", serde_json::to_string_pretty(snap)?);
+const DEFAULT_METADATA_FORMAT: &str = "{status} {artist} - {title}";
+
+pub fn print_metadata(
+    snap: &PlayerSnapshotOut,
+    format: Option<&str>,
+    mode: OutputMode,
+) -> Result<()> {
+    match mode {
+        OutputMode::Json => println!("{}", serde_json::to_string_pretty(snap)?),
+        OutputMode::Toml => println!("{}", toml::to_string(snap)?),
+        OutputMode::Text => {
+            let tpl = format.unwrap_or(DEFAULT_METADATA_FORMAT);
+            let out = crate::output::format_template(tpl, snap);
+            println!("{out}");
+        }
     }
     Ok(())
 }
