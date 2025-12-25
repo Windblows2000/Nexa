@@ -16,6 +16,7 @@
 
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
+use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -26,6 +27,7 @@ use std::{
 use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
 
 const MAX_CACHE_BYTES: u64 = 1_000_000_000;
+const MAX_OBJECT_BYTES: u64 = 10 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct ImageCache {
@@ -125,24 +127,43 @@ impl ImageCache {
             fs::create_dir_all(parent).await?;
         }
 
-        let bytes = self
-            .client
-            .get(url)
-            .send()
-            .await?
-            .error_for_status()?
-            .bytes()
-            .await?;
+        let resp = self
+        .client
+        .get(url)
+        .send()
+        .await?
+        .error_for_status()?;
+
+        if let Some(len) = resp.content_length() {
+            if len > MAX_OBJECT_BYTES {
+                anyhow::bail!("album art too large: {} bytes", len);
+            }
+        }
 
         let tmp = path.with_extension("tmp");
-        let mut f = fs::File::create(&tmp).await?;
-        f.write_all(&bytes).await?;
-        f.flush().await?;
-        drop(f);
+        let mut file = fs::File::create(&tmp).await?;
+
+        let mut downloaded: u64 = 0;
+        let mut stream = resp.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            downloaded += chunk.len() as u64;
+
+            if downloaded > MAX_OBJECT_BYTES {
+                let _ = fs::remove_file(&tmp).await;
+                anyhow::bail!("album art exceeded max size");
+            }
+
+            file.write_all(&chunk).await?;
+        }
+
+        file.flush().await?;
+        drop(file);
 
         fs::rename(&tmp, &path).await?;
 
-        if bytes.len() as u64 > MAX_CACHE_BYTES / 10 {
+        if downloaded > MAX_CACHE_BYTES / 10 {
             let _ = enforce_size_limit(&self.root).await;
         }
 
