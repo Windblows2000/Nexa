@@ -59,7 +59,8 @@ cargo install --path .
 
 2- The daemon is preferably started via the supplied systemd user service.
 ```bash
-mv resources/systemd/nexad.service ~/.config/systemd/user/
+mkdir -p ~/.config/systemd/user/
+cp resources/systemd/nexad.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now nexad.service
 ```
@@ -78,6 +79,7 @@ For contributions, please read below.
 3- Submit a pull request (PR)
 
 * For issues:
+
 Please provide as much information as possible in your issue (logs, output, etc...). 
 
 
