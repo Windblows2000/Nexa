@@ -20,8 +20,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use mprizzle::PlayerIdentity;
 use tokio::sync::{RwLock, broadcast};
+use tracing::{debug, trace, warn};
 
 use crate::{
     mpris::{PlayerStateSnapshot, PlayerStatus, TrackMetadata},
@@ -37,8 +37,8 @@ pub struct DaemonState {
 pub type SharedState = DaemonState;
 
 struct Inner {
-    players: HashMap<PlayerIdentity, LivePlayer>,
-    primary_id: Option<PlayerIdentity>,
+    players: HashMap<String, LivePlayer>,
+    primary_id: Option<String>,
 }
 
 impl Default for DaemonState {
@@ -49,6 +49,7 @@ impl Default for DaemonState {
 
 impl DaemonState {
     pub fn new() -> Self {
+        trace!("Initializing new DaemonState");
         let (tx, _) = broadcast::channel(256);
         Self {
             inner: Arc::new(RwLock::new(Inner {
@@ -59,105 +60,268 @@ impl DaemonState {
         }
     }
 
-    fn id_from_bus(bus: &str) -> Option<PlayerIdentity> {
-        PlayerIdentity::new(bus.to_string()).ok()
-    }
-
     pub fn subscribe(&self) -> broadcast::Receiver<PlayerStateSnapshot> {
+        trace!(
+            receivers = self.tx.receiver_count(),
+            "New subscriber added to broadcast channel"
+        );
         self.tx.subscribe()
     }
 
     pub async fn primary_snapshot(&self) -> Option<PlayerStateSnapshot> {
         let inner = self.inner.read().await;
         let id = inner.primary_id.as_ref()?;
-        inner.players.get(id).map(|p| p.snapshot())
+        let snap = inner.players.get(id).map(|p| p.snapshot());
+        trace!(
+            player_id = ?id,
+            success = snap.is_some(),
+               "Primary snapshot requested"
+        );
+        snap
     }
 
     pub async fn snapshot_for_player(&self, player_id: &str) -> Option<PlayerStateSnapshot> {
-        let id = Self::id_from_bus(player_id)?;
         let inner = self.inner.read().await;
-        inner.players.get(&id).map(|p| p.snapshot())
+        let snap = inner.players.get(player_id).map(|p| p.snapshot());
+        trace!(
+            player_id,
+            success = snap.is_some(),
+            "Player snapshot requested"
+        );
+        snap
     }
 
     pub async fn known_players(&self) -> Vec<String> {
         let inner = self.inner.read().await;
-        inner
-            .players
-            .keys()
-            .map(|id| id.bus().to_string())
-            .collect()
+        let keys: Vec<String> = inner.players.keys().cloned().collect();
+        trace!(count = keys.len(), "Known players list requested");
+        keys
     }
 
     pub async fn remove_player(&self, player_id: &str) {
-        let Some(id) = Self::id_from_bus(player_id) else {
-            return;
-        };
-
         let mut inner = self.inner.write().await;
-        inner.players.remove(&id);
+        let existed = inner.players.remove(player_id).is_some();
+        trace!(player_id, existed, "Removing player from state");
 
-        if inner.primary_id.as_ref() == Some(&id) {
+        if !existed {
+            warn!(player_id, "Attempted to remove non-existent player");
+        }
+
+        if inner.primary_id.as_deref() == Some(player_id) {
+            let old_primary = inner.primary_id.clone();
             inner.primary_id = pick_primary_id(&inner.players);
+            debug!(
+                old_primary = ?old_primary,
+                new_primary = ?inner.primary_id,
+                "Primary player reassigned after removal"
+            );
         }
     }
 
-    pub async fn remove_player_id(&self, identity: &PlayerIdentity) {
-        let mut inner = self.inner.write().await;
-        inner.players.remove(identity);
-
-        if inner.primary_id.as_ref() == Some(identity) {
-            inner.primary_id = pick_primary_id(&inner.players);
+    pub fn should_tick(&self) -> bool {
+        if self.tx.receiver_count() == 0 {
+            trace!("should_tick: no receivers; false");
+            return false;
         }
+
+        let inner = self.inner.blocking_read();
+        let Some(id) = inner.primary_id.as_deref() else {
+            trace!("should_tick: no primary; false");
+            return false;
+        };
+
+        let playing = inner
+            .players
+            .get(id)
+            .is_some_and(|p| p.status == PlayerStatus::Playing);
+
+        trace!(player_id = %id, playing, "should_tick evaluated");
+        playing
     }
 
-    pub async fn upsert_snapshot(&self, snapshot: PlayerStateSnapshot, prio: ActivityPriority) {
-        let Some(id) = PlayerIdentity::new(snapshot.player_id.clone()).ok() else {
+    pub async fn rebroadcast(&self) {
+        if self.tx.receiver_count() == 0 {
+            trace!("rebroadcast: no receivers; skipping");
+            return;
+        }
+
+        let Some(snapshot) = self.primary_snapshot().await else {
+            trace!("rebroadcast: no primary snapshot; skipping");
             return;
         };
 
+        trace!(
+            player_id = %snapshot.player_id,
+            status = ?snapshot.status,
+            position_us = snapshot.position.as_micros(),
+               receivers = self.tx.receiver_count(),
+               "rebroadcast: primary snapshot fetched"
+        );
+
+        if snapshot.status != PlayerStatus::Playing {
+            trace!("rebroadcast: primary not playing; skipping send");
+            return;
+        }
+
+        match self.tx.send(snapshot) {
+            Ok(sent) => trace!(sent, "rebroadcast: broadcast sent"),
+            Err(e) => warn!(error = ?e, "rebroadcast: broadcast send failed"),
+        }
+    }
+
+    pub async fn upsert_snapshot_and_broadcast(
+        &self,
+        snapshot: PlayerStateSnapshot,
+        prio: ActivityPriority,
+        should_broadcast: bool,
+    ) {
+        let id = snapshot.player_id.clone();
+        trace!(
+            player_id = %id,
+            prio = ?prio,
+            should_broadcast,
+            receivers = self.tx.receiver_count(),
+               "Upsert snapshot requested"
+        );
+
         let mut inner = self.inner.write().await;
+        let old_primary = inner.primary_id.clone();
 
         match inner.players.get_mut(&id) {
-            Some(p) => p.apply_snapshot(snapshot, prio),
+            Some(p) => {
+                trace!(player_id = %id, "Applying snapshot update to existing player");
+                p.apply_snapshot(snapshot, prio);
+            }
             None => {
+                debug!(player_id = %id, "Inserting new player into state");
                 inner.players.insert(id.clone(), LivePlayer::new(snapshot));
             }
         }
 
         inner.primary_id = pick_primary_id(&inner.players);
-        let snap = inner.players.get(&id).map(|p| p.snapshot());
+
+        trace!(
+            old_primary = ?old_primary,
+            new_primary = ?inner.primary_id,
+            "Primary player evaluation complete"
+        );
+
+        let receiver_count = self.tx.receiver_count();
+        let snap = if should_broadcast && receiver_count > 0 {
+            inner.players.get(&id).map(|p| p.snapshot())
+        } else {
+            None
+        };
+
         drop(inner);
 
-        if let Some(snap) = snap {
-            let _ = self.tx.send(snap);
+        match snap {
+            Some(snap) => {
+                trace!(
+                    player_id = %id,
+                    receivers = receiver_count,
+                    status = ?snap.status,
+                    "Broadcasting player snapshot"
+                );
+                let _ = self.tx.send(snap);
+            }
+            None => {
+                trace!(
+                    player_id = %id,
+                    receivers = receiver_count,
+                    "Snapshot suppressed"
+                );
+            }
         }
     }
 
-    pub async fn apply_update_id(
+    pub async fn apply_update_id_selective(
         &self,
-        identity: &PlayerIdentity,
+        player_id: &str,
         update: PlayerUpdate,
         prio: ActivityPriority,
+        should_broadcast: bool,
     ) {
+        trace!(
+            player_id,
+            has_status = update.status.is_some(),
+               has_metadata = update.metadata.is_some(),
+               has_rate = update.rate.is_some(),
+               has_volume = update.volume.is_some(),
+               has_shuffle = update.shuffle.is_some(),
+               has_loop = update.loop_status.is_some(),
+               has_position = update.position_micros.is_some(),
+               prio = ?prio,
+               should_broadcast,
+               receivers = self.tx.receiver_count(),
+               "Selective update received"
+        );
+
         let mut inner = self.inner.write().await;
 
-        // 1. Apply update in its own scope
-        {
-            let Some(p) = inner.players.get_mut(identity) else {
+        let is_currently_primary = inner.primary_id.as_deref() == Some(player_id);
+
+        let (status_changed, old_status, new_status) =
+            if let Some(p) = inner.players.get_mut(player_id) {
+                let old_status = p.status;
+                trace!(player_id, "Applying selective update to player");
+                update.apply(p, prio);
+                let new_status = p.status;
+                (old_status != new_status, old_status, new_status)
+            } else {
+                warn!(player_id, "Received update for unknown player; ignoring");
                 return;
             };
-            update.apply(p, prio);
-        } // <- mutable borrow of `p` ends here
 
-        // 2. Now we can safely touch `inner` again
-        inner.primary_id = pick_primary_id(&inner.players);
+        trace!(
+            player_id,
+            status_changed,
+            old_status = ?old_status,
+            new_status = ?new_status,
+            is_currently_primary,
+            "Selective update applied"
+        );
 
-        // 3. Snapshot immutably
-        let snap = inner.players.get(identity).map(|p| p.snapshot());
+        let old_primary = inner.primary_id.clone();
+
+        if status_changed || !is_currently_primary {
+            inner.primary_id = pick_primary_id(&inner.players);
+            trace!(
+                old_primary = ?old_primary,
+                new_primary = ?inner.primary_id,
+                "Primary player evaluation complete"
+            );
+        } else {
+            trace!(player_id, "Skipping re-election: player is already primary");
+        }
+
+        let receiver_count = self.tx.receiver_count();
+        let snap = if should_broadcast && receiver_count > 0 {
+            inner.players.get(player_id).map(|p| p.snapshot())
+        } else {
+            None
+        };
+
         drop(inner);
 
-        if let Some(snap) = snap {
-            let _ = self.tx.send(snap);
+        match snap {
+            Some(snap) => {
+                trace!(
+                    player_id,
+                    receivers = receiver_count,
+                    status = ?snap.status,
+                    position_us = snap.position.as_micros(),
+                       "Broadcasting selective update snapshot"
+                );
+                let _ = self.tx.send(snap);
+            }
+            None => {
+                trace!(
+                    player_id,
+                    receivers = receiver_count,
+                    "Selective update snapshot suppressed"
+                );
+            }
         }
     }
 }
@@ -175,13 +339,24 @@ pub struct PlayerUpdate {
 
 impl PlayerUpdate {
     fn apply(self, p: &mut LivePlayer, prio: ActivityPriority) {
-        let now = Instant::now();
+        trace!(
+            player_id = %p.player_id,
+            status = self.status.is_some(),
+               metadata = self.metadata.is_some(),
+               rate = self.rate.is_some(),
+               volume = self.volume.is_some(),
+               shuffle = self.shuffle.is_some(),
+               loop_status = self.loop_status.is_some(),
+               position = self.position_micros,
+               prio = ?prio,
+               "Applying PlayerUpdate fields"
+        );
 
         if let Some(s) = self.status {
-            p.status = s;
+            p.apply_status(s);
         }
         if let Some(m) = self.metadata {
-            p.metadata = m;
+            p.apply_metadata(m);
         }
         if let Some(r) = self.rate {
             p.rate = Some(r);
@@ -195,20 +370,26 @@ impl PlayerUpdate {
         if let Some(ls) = self.loop_status {
             p.loop_status = Some(ls);
         }
-
         if let Some(micros) = self.position_micros
             && micros >= 0
         {
-            p.reanchor_position(now, Duration::from_micros(micros as u64));
+            p.apply_position_update(Duration::from_micros(micros as u64));
         }
 
-        p.last_activity = now;
         p.last_activity_priority = p.last_activity_priority.max(prio);
+
+        trace!(
+            player_id = %p.player_id,
+            status = ?p.status,
+            last_activity = ?p.last_activity,
+            last_priority = ?p.last_activity_priority,
+            "Player activity updated"
+        );
     }
 }
 
-fn pick_primary_id(players: &HashMap<PlayerIdentity, LivePlayer>) -> Option<PlayerIdentity> {
-    players
+fn pick_primary_id(players: &HashMap<String, LivePlayer>) -> Option<String> {
+    let chosen = players
         .iter()
         .max_by(|(_, a), (_, b)| {
             let a_playing = a.status == PlayerStatus::Playing;
@@ -224,7 +405,10 @@ fn pick_primary_id(players: &HashMap<PlayerIdentity, LivePlayer>) -> Option<Play
                 .cmp(&b.last_activity_priority)
                 .then_with(|| a.last_activity.cmp(&b.last_activity))
         })
-        .map(|(id, _)| id.clone())
+        .map(|(id, _)| id.clone());
+
+    trace!(primary_id = ?chosen, count = players.len(), "Primary player election completed");
+    chosen
 }
 
 #[derive(Default)]
@@ -253,16 +437,16 @@ impl FollowState {
 
         if same_non_position {
             let position_changed = prev.position.as_secs() != next.position.as_secs();
-            if position_changed && next.status == PlayerStatus::Playing {
-                if let Some(last) = self.last_emit
-                    && now.duration_since(last) < Duration::from_secs(1)
-                {
-                    return false;
-                }
-            } else {
+            if !position_changed || next.status != PlayerStatus::Playing {
                 return false;
             }
         }
+
+        trace!(
+            player_id = %next.player_id,
+            status = ?next.status,
+            "FollowState emitting snapshot"
+        );
 
         self.last_snapshot = Some(next.clone());
         self.last_emit = Some(now);

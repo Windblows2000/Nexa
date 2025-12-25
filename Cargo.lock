@@ -1012,19 +1012,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mprizzle"
-version = "0.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f055354c97347a8ba49f9dc8c9d0311d1f7252b7013262866fca7f3cf673a5e"
-dependencies = [
- "futures",
- "thiserror",
- "tokio",
- "zbus",
- "zvariant",
-]
-
-[[package]]
 name = "nexa"
 version = "1.0.0"
 dependencies = [
@@ -1034,8 +1021,8 @@ dependencies = [
  "directories",
  "filetime",
  "futures",
+ "futures-util",
  "hex",
- "mprizzle",
  "reqwest",
  "serde",
  "serde_json",
@@ -1735,7 +1722,6 @@ dependencies = [
  "signal-hook-registry",
  "socket2",
  "tokio-macros",
- "tracing",
  "windows-sys 0.61.2",
 ]
 
@@ -2375,7 +2361,6 @@ dependencies = [
  "ordered-stream",
  "serde",
  "serde_repr",
- "tokio",
  "tracing",
  "uds_windows",
  "uuid",

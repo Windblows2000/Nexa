@@ -3,10 +3,10 @@
 
 ### Description
 
-A modern media controller written in Rust. This project was born out of the desire for a "better" media controller. Especially in window managers where your only option is [Playerctl](https://github.com/altdesktop/playerctl).
+A modern media controller written in Rust. Nexa works with any MPRIS-compatible media player (Spotify, MPV, Firefox, Chromium, etc.). This project was born out of the desire for a "better" media controller. Especially in window managers where your only option is [Playerctl](https://github.com/altdesktop/playerctl).
 
 ### Features
-- **Blazingly fast** — Daemon + CLI design delivers sub-2 ms execution times.
+- **Blazingly fast** — Daemon + CLI design for maximum speed.
 - **Event-driven** — Subscribes to daemon signals instead of polling for metadata updates.
 - **Real-time progress** — Efficient local ticker provides smooth, accurate playback progress.
 - **Integrated album art caching** — A single command exposes a stable local path to album art / thumbnails.
@@ -15,17 +15,19 @@ A modern media controller written in Rust. This project was born out of the desi
 ### Examples
   ```bash
   nexa follow --toml #Prints out metadata in TOML
-  nexa command volume --set 0.60 #sets audio to 60%
+  nexa command volume --set 0.60 #Sets audio to 60%
   nexa command play-pause #Play/Pause the media
-  nexa metadata #Prints out metadata in json
+  nexa metadata # Prints out metadata in JSON
   nexa metadata --format '{artist} - {title}' #Playerctl-like output
   nexad #Starts the daemon.
   ```
 
 ### CLI
 
-```
+```bash
 ❯ nexa
+A Powerful, Rust-Based CLI Linux Tool for your Media Needs.
+
 Usage: nexa [OPTIONS] <COMMAND>
 
 Commands:
@@ -46,11 +48,22 @@ Options:
 
 ### Getting Started
 
-Its super easy! Just make sure you run the daemon in the background either via a systemd service or an exec command. An example in hyprland:
+It's easy! Just follow the instructions below:
+
+1- clone the repo and install Nexa.
+```bash
+git clone https://github.com/Windblows2000/Nexa.git
+cd Nexa
+cargo install --path .
 ```
-exec-once = nexad &
+
+2- The daemon is preferably started via the supplied systemd user service.
+```bash
+mv resources/systemd/nexad.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now nexad.service
 ```
-The daemon will run on boot to handle discovery and commands. If you're confused about any part of the command line, always use ```nexa COMMAND --help``` to get more explanation.
+The daemon runs per-user and automatically tracks media players as they appear or disappear.
 
 ### Contributing
 

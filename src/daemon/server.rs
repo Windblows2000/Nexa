@@ -16,8 +16,9 @@
 
 use anyhow::Result;
 use futures::StreamExt;
-use std::time::Duration;
+use tracing::{debug, trace, warn};
 
+use std::os::unix::fs::PermissionsExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
@@ -32,25 +33,40 @@ pub async fn run(
     state: SharedState,
     conn: crate::mpris::SharedConnection,
     cache: ImageCache,
+    ticker_tx: tokio::sync::watch::Sender<bool>,
 ) -> Result<()> {
     let path = socket_path();
 
     if let Some(parent) = path.parent() {
+        debug!(parent = ?parent, "Ensuring socket directory exists");
         tokio::fs::create_dir_all(parent).await?;
     }
-    let _ = tokio::fs::remove_file(&path).await;
+
+    if path.exists() {
+        debug!(path = ?path, "Cleaning up existing socket file");
+        let _ = tokio::fs::remove_file(&path).await;
+    }
 
     let listener = UnixListener::bind(&path)?;
 
+    let mut perms = std::fs::metadata(&path)?.permissions();
+    perms.set_mode(0o600);
+    std::fs::set_permissions(&path, perms)?;
+
+    debug!(path = ?path, "IPC server listening on Unix socket");
+
     loop {
-        let (stream, _) = listener.accept().await?;
+        let (stream, addr) = listener.accept().await?;
+        trace!(?addr, "Accepted new IPC connection");
+
         let state = state.clone();
         let conn = conn.clone();
         let cache = cache.clone();
+        let ticker_tx = ticker_tx.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_conn(state, conn, cache, stream).await {
-                tracing::warn!(error = ?e, "client error");
+            if let Err(e) = handle_conn(state, conn, cache, ticker_tx, stream).await {
+                warn!(error = ?e, "IPC client connection error");
             }
         });
     }
@@ -60,6 +76,7 @@ async fn handle_conn(
     state: SharedState,
     conn: crate::mpris::SharedConnection,
     cache: ImageCache,
+    ticker_tx: tokio::sync::watch::Sender<bool>,
     stream: UnixStream,
 ) -> Result<()> {
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
@@ -67,6 +84,7 @@ async fn handle_conn(
     while let Some(frame) = framed.next().await {
         let bytes = frame?;
         let req: Request = decode_request(&bytes)?;
+        trace!(request = ?req, "Received IPC request");
 
         match req {
             Request::Follow {
@@ -74,6 +92,17 @@ async fn handle_conn(
                 format,
                 compat,
             } => {
+                let needs_elapsed = format
+                    .as_deref()
+                    .map(|f| f.contains("{elapsed}"))
+                    .unwrap_or(false);
+
+                if needs_elapsed {
+                    let _ = ticker_tx.send(true);
+                }
+
+                debug!(?target, ?format, "Client entering Follow mode");
+
                 handle_follow(
                     state.clone(),
                     &cache,
@@ -83,8 +112,15 @@ async fn handle_conn(
                     compat,
                 )
                 .await?;
+
+                if needs_elapsed {
+                    let _ = ticker_tx.send(false);
+                }
+
+                debug!("Client exited Follow mode");
                 break;
             }
+
             _ => {
                 let resp =
                     crate::control::handle_request(req, state.clone(), conn.clone(), &cache).await;
@@ -96,47 +132,47 @@ async fn handle_conn(
     Ok(())
 }
 
-fn follow_tick(format: Option<&str>) -> Duration {
-    match format {
-        Some(f) if f.contains("{elapsed}") => Duration::from_millis(250),
-        _ => Duration::from_millis(1000),
-    }
-}
-
 async fn handle_follow(
     state: SharedState,
     cache: &ImageCache,
     framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
     target: Target,
-    format: Option<&str>,
+    _format: Option<&str>,
     _compat: Option<CompatMode>,
 ) -> Result<()> {
     let mut rx = state.subscribe();
-    let mut ticker = tokio::time::interval(follow_tick(format));
+    let mut follow_state = crate::daemon::state::FollowState::default();
 
-    if let Some(snap) = resolve_snapshot(&state, &target).await {
+    if let Some(snap) = resolve_snapshot(&state, &target).await
+        && follow_state.should_emit(&snap)
+    {
         emit_snapshot(framed, snap, cache).await?;
     }
 
     loop {
-        tokio::select! {
-            _ = ticker.tick() => {
-                if let Some(snap) = resolve_snapshot(&state, &target).await {
+        match rx.recv().await {
+            Ok(snap) => {
+                if !target_matches_snapshot(&target, &snap) {
+                    continue;
+                }
+
+                if matches!(target, Target::Best { .. })
+                    && let Some(primary) = state.primary_snapshot().await
+                    && primary.player_id != snap.player_id
+                {
+                    continue;
+                }
+
+                if follow_state.should_emit(&snap) {
+                    trace!(player_id = %snap.player_id, "Emitting change-based snapshot");
                     emit_snapshot(framed, snap, cache).await?;
                 }
             }
-            msg = rx.recv() => {
-                match msg {
-                    Ok(snap) => {
-                        if !target_matches_snapshot(&target, &snap) {
-                            continue;
-                        }
-                        emit_snapshot(framed, snap, cache).await?;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                warn!(missed = count, "Client lagged");
+                continue;
             }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
         }
     }
 

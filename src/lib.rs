@@ -22,4 +22,5 @@ pub mod ipc;
 pub mod mpris;
 pub mod output;
 pub mod player;
+pub mod ticker;
 pub mod utils;

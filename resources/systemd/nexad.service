@@ -1,0 +1,12 @@
+[Unit]
+Description=Nexa Daemon
+After=network.target
+
+[Service]
+ExecStart=%h/.cargo/bin/nexad
+Restart=always
+RestartSec=5
+Type=simple
+
+[Install]
+WantedBy=default.target

@@ -29,13 +29,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     init_logging(cli.verbose)?;
 
-    // ---- client-side commands (no daemon needed) ----
     if let Cmd::Cache { cmd } = &cli.cmd {
         nexa::cli::handle_cache(cmd.clone()).await?;
         return Ok(());
     }
 
-    // ---- build IPC request ----
     let req = nexa::cli::to_request(&cli)?.expect("non-cache commands must produce a request");
 
     let stream = UnixStream::connect(socket_path())
@@ -45,58 +43,55 @@ async fn main() -> Result<()> {
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
     framed.send(encode_request(&req)?.into()).await?;
 
-    // ---- output mode resolution ----
     let (output_mode, template) = match &cli.cmd {
         Cmd::Metadata { out, format, .. } => (
             out.resolve(OutputMode::Json, format.is_some()),
             format.as_deref(),
         ),
-
         Cmd::Follow { out, format, .. } => (
             out.resolve(OutputMode::Json, format.is_some()),
             format.as_deref(),
         ),
-
         Cmd::Status { out, .. } | Cmd::List { out, .. } => {
             (out.resolve(OutputMode::Json, false), None)
         }
-
         _ => (OutputMode::Text, None),
     };
 
-    // ---- response loop ----
+    let mut last_snapshot: Option<Box<nexa::ipc::PlayerSnapshotOut>> = None;
+
     while let Some(bytes) = framed.next().await.transpose()? {
         let resp = decode_response(&bytes)?;
 
         match resp {
             Response::Metadata(snap) => {
+                last_snapshot = Some(snap.clone());
                 nexa::cli::print_metadata(&snap, template, output_mode)?;
             }
-
+            Response::Position(seconds) => {
+                if let Some(mut snap) = last_snapshot.clone() {
+                    snap.elapsed_seconds = seconds;
+                    nexa::cli::print_metadata(&snap, template, output_mode)?;
+                    last_snapshot = Some(snap);
+                }
+            }
             Response::Status(s) => {
                 println!("{s}");
             }
-
             Response::List(players) => {
                 for p in players {
                     println!("{p}");
                 }
             }
-
             Response::Ok => {
                 println!("ok");
             }
-
-            Response::Pong => {
-                // silent by default
-            }
-
+            Response::Pong => {}
             Response::Error(e) => {
                 anyhow::bail!(e);
             }
         }
 
-        // Non-follow commands exit after first response
         if !matches!(cli.cmd, Cmd::Follow { .. }) {
             break;
         }

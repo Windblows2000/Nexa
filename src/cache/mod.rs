@@ -17,9 +17,13 @@
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
-use tokio::{fs, io::AsyncWriteExt};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
 
 const MAX_CACHE_BYTES: u64 = 1_000_000_000;
 
@@ -27,6 +31,7 @@ const MAX_CACHE_BYTES: u64 = 1_000_000_000;
 pub struct ImageCache {
     root: PathBuf,
     client: reqwest::Client,
+    in_flight: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 
 impl ImageCache {
@@ -41,15 +46,22 @@ impl ImageCache {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()?,
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
         })
     }
+    pub async fn cached_path(&self, url: &str) -> Option<PathBuf> {
+        let path = self.path_for_url(url);
 
-    /// Return the cache root directory.
+        match fs::metadata(&path).await {
+            Ok(meta) if meta.is_file() && meta.len() > 0 => Some(path),
+            _ => None,
+        }
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }
 
-    /// Return (file_count, total_size_bytes).
     pub async fn stats(&self) -> Result<(usize, u64)> {
         let mut count = 0;
         let mut size = 0;
@@ -70,13 +82,11 @@ impl ImageCache {
         Ok((count, size))
     }
 
-    /// Remove all cached album art (best-effort).
     pub async fn clear(&self) -> Result<()> {
         let _ = fs::remove_dir_all(&self.root).await;
         Ok(())
     }
 
-    /// Deterministic cache path for a given URL.
     pub fn path_for_url(&self, url: &str) -> PathBuf {
         let mut h = Sha256::new();
         h.update(url.as_bytes());
@@ -84,17 +94,30 @@ impl ImageCache {
         self.root.join(name)
     }
 
-    /// Ensure the image for `url` exists in the cache and return its path.
-    ///
-    /// Guarantees:
-    /// - Deterministic paths
-    /// - Atomic writes
-    /// - Size-only eviction (best-effort)
     pub async fn ensure_cached(&self, url: &str) -> Result<PathBuf> {
         let path = self.path_for_url(url);
 
-        // ---- cache hit ----
-        if fs::try_exists(&path).await.unwrap_or(false) {
+        if let Ok(meta) = fs::metadata(&path).await
+            && meta.is_file()
+            && meta.len() > 0
+        {
+            return Ok(path);
+        }
+
+        let url_lock = {
+            let mut map = self.in_flight.lock().await;
+
+            map.entry(url.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+
+        let _guard = url_lock.lock().await;
+
+        if let Ok(meta) = fs::metadata(&path).await
+            && meta.is_file()
+            && meta.len() > 0
+        {
             return Ok(path);
         }
 
@@ -102,7 +125,6 @@ impl ImageCache {
             fs::create_dir_all(parent).await?;
         }
 
-        // ---- download ----
         let bytes = self
             .client
             .get(url)
@@ -112,7 +134,6 @@ impl ImageCache {
             .bytes()
             .await?;
 
-        // ---- atomic write ----
         let tmp = path.with_extension("tmp");
         let mut f = fs::File::create(&tmp).await?;
         f.write_all(&bytes).await?;
@@ -121,16 +142,14 @@ impl ImageCache {
 
         fs::rename(&tmp, &path).await?;
 
-        // ---- eviction (best-effort) ----
-        let _ = enforce_size_limit(&self.root).await;
+        if bytes.len() as u64 > MAX_CACHE_BYTES / 10 {
+            let _ = enforce_size_limit(&self.root).await;
+        }
 
         Ok(path)
     }
 }
 
-/// Enforce cache size limit by deleting oldest files until under limit.
-///
-/// Best-effort: failures are ignored.
 async fn enforce_size_limit(root: &Path) -> Result<()> {
     let mut entries = Vec::new();
     let mut total_size: u64 = 0;
@@ -161,7 +180,6 @@ async fn enforce_size_limit(root: &Path) -> Result<()> {
         return Ok(());
     }
 
-    // Oldest first
     entries.sort_by_key(|(mtime, _, _)| *mtime);
 
     for (_, path, size) in entries {

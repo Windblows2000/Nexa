@@ -202,6 +202,7 @@ pub enum Response {
     List(Vec<String>),
     Status(String),
     Metadata(Box<PlayerSnapshotOut>),
+    Position(u64),
     Ok,
     Error(String),
 }

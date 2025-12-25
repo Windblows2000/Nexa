@@ -14,92 +14,110 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use anyhow::Result;
-use mprizzle::{Mpris, MprisEvent};
-use std::time::Duration;
-
 use crate::{
     daemon::state::{PlayerUpdate, SharedState},
-    mpris,
+    mpris::{PlayerStatus, SharedConnection, list_players, player_from_bus, snapshot_from_player},
     player::ActivityPriority,
 };
+use anyhow::Result;
+use futures_util::StreamExt;
+use tracing::{debug, trace, warn};
+use zbus::fdo::DBusProxy;
 
-pub async fn run(state: SharedState, mpris: &mut Mpris) -> Result<()> {
-    let conn = mpris.connection();
+pub async fn run(state: SharedState, conn: SharedConnection) -> Result<()> {
+    debug!(target: "nexa::daemon::supervisor", "Initializing supervisor");
 
-    mpris.watch();
+    // Startup: find existing players
+    if let Ok(buses) = list_players(&conn).await {
+        for bus in buses {
+            let state = state.clone();
+            let conn = conn.clone();
+            tokio::spawn(async move {
+                if let Err(e) = monitor_player(state, conn, bus.clone()).await {
+                    warn!(target: "nexa::daemon::supervisor", %bus, error = ?e, "Startup monitor exited");
+                }
+            });
+        }
+    }
 
-    if let Ok(existing_buses) = mpris::list_players(conn.clone()).await {
-        for bus in existing_buses {
-            if let Ok(p) = mpris::player_from_bus(conn.clone(), &bus).await
-                && let Ok(snap) = mpris::snapshot_from_player(&p).await
-            {
-                state
-                    .upsert_snapshot(snap, ActivityPriority::MetadataUpdate)
-                    .await;
+    let raw = conn.lock().await.clone();
+    let dbus = DBusProxy::new(&raw).await?;
+    let mut changes = dbus.receive_name_owner_changed().await?;
+
+    while let Some(sig) = changes.next().await {
+        let args = sig.args()?;
+        let name = args.name();
+
+        if name.starts_with("org.mpris.MediaPlayer2.") {
+            if args.new_owner().is_some() {
+                debug!(target: "nexa::daemon::supervisor", bus = %name, "New player detected");
+                let state = state.clone();
+                let conn = conn.clone();
+                let bus_id = name.to_string();
+
+                tokio::spawn(async move {
+                    if let Err(e) = monitor_player(state, conn, bus_id.clone()).await {
+                        warn!(target: "nexa::daemon::supervisor", bus = %bus_id, error = ?e, "Dynamic monitor exited");
+                    }
+                });
+            } else {
+                // Secondary safety: handle explicit name loss
+                debug!(target: "nexa::daemon::supervisor", bus = %name, "Player left bus");
+                state.remove_player(name).await;
             }
         }
     }
+    Ok(())
+}
+
+async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String) -> Result<()> {
+    let proxy = player_from_bus(&conn, &bus).await?;
+
+    if let Ok(snap) = snapshot_from_player(&proxy).await {
+        state
+            .upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true)
+            .await;
+    }
+
+    let mut status_changes = proxy.receive_playback_status_changed().await;
+    let mut meta_changes = proxy.receive_metadata_changed().await;
+    let mut seek_stream = proxy.receive_seeked().await?;
 
     loop {
-        let evt = match mpris.recv().await? {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::debug!(error = ?e, "skipping mpris event error");
-                continue;
-            }
-        };
-
-        match evt {
-            MprisEvent::PlayerAttached(player) => {
-                if let Ok(snap) = mpris::snapshot_from_player(&player).await {
-                    state
-                        .upsert_snapshot(snap, ActivityPriority::MetadataUpdate)
-                        .await;
-                }
-            }
-
-            MprisEvent::PlayerDetached(identity) => {
-                state.remove_player_id(&identity).await;
-            }
-
-            MprisEvent::PlayerPropertiesChanged(identity) => {
-                if let Ok(p) = mpris::player_from_bus(conn.clone(), identity.bus()).await
-                    && let Ok(snap) = mpris::snapshot_from_player(&p).await
-                {
-                    let prio = match snap.status {
-                        mpris::PlayerStatus::Playing | mpris::PlayerStatus::Paused => {
-                            ActivityPriority::StatusUpdate
-                        }
-                        _ => ActivityPriority::MetadataUpdate,
-                    };
-                    state.upsert_snapshot(snap, prio).await;
-                }
-            }
-
-            MprisEvent::PlayerSeeked(identity) => {
-                if let Ok(p) = mpris::player_from_bus(conn.clone(), identity.bus()).await {
-                    let upd = PlayerUpdate {
-                        position_micros: p.position().await.ok().map(|d| d.as_micros() as i64),
+        tokio::select! {
+            res = status_changes.next() => {
+                let Some(sig) = res else { break };
+                if let Ok(new_status) = sig.get().await {
+                    let update = PlayerUpdate {
+                        status: Some(match new_status.as_str() {
+                            "Playing" => PlayerStatus::Playing,
+                            "Paused" => PlayerStatus::Paused,
+                            _ => PlayerStatus::Stopped,
+                        }),
                         ..Default::default()
                     };
-                    state
-                        .apply_update_id(&identity, upd, ActivityPriority::StatusUpdate)
-                        .await;
+                    state.apply_update_id_selective(&bus, update, ActivityPriority::StatusUpdate, true).await;
                 }
             }
-
-            MprisEvent::PlayerPosition(identity, pos) => {
-                let upd = PlayerUpdate {
-                    position_micros: Some(pos.as_micros() as i64),
-                    ..Default::default()
-                };
-                state
-                    .apply_update_id(&identity, upd, ActivityPriority::StatusUpdate)
-                    .await;
+            res = meta_changes.next() => {
+                if res.is_none() { break };
+                if let Ok(snap) = snapshot_from_player(&proxy).await {
+                    state.upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true).await;
+                }
+            }
+            res = seek_stream.next() => {
+                if res.is_none() { break };
+                if let Some(sig) = res
+                    && let Ok(args) = sig.args() {
+                        trace!(target: "nexa::daemon::supervisor", %bus, pos = args.position(), "Seek detected");
+                        // Optional: Apply position update to state if needed
+                    }
             }
         }
-
-        tokio::time::sleep(Duration::from_millis(5)).await;
     }
+
+    // Clean up when the player drops or the loop breaks
+    debug!(target: "nexa::daemon::supervisor", %bus, "Removing player from state");
+    state.remove_player(&bus).await;
+    Ok(())
 }

@@ -16,11 +16,16 @@
 
 use anyhow::Result;
 use clap::Parser;
-use mprizzle::Mpris;
+use nexa::ticker;
+use std::sync::Arc;
+use tokio::sync::{Mutex, watch};
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::EnvFilter;
+use zbus::Connection;
+
 use nexa::{
     cache::ImageCache,
     daemon::{server, state::DaemonState, supervisor},
-    utils::init_logging,
 };
 
 #[derive(Parser, Debug)]
@@ -30,24 +35,74 @@ struct Args {
     verbose: u8,
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    init_logging(args.verbose)?;
+
+    let (ticker_tx, ticker_rx) = watch::channel(false);
+
+    let level = match args.verbose {
+        0 => LevelFilter::INFO,
+        1 => LevelFilter::DEBUG,
+        _ => LevelFilter::TRACE,
+    };
+
+    tracing_subscriber::fmt()
+        .with_max_level(level)
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive(level.into())
+                .from_env_lossy()
+                .add_directive("zbus=off".parse().unwrap())
+                .add_directive("zbus_names=off".parse().unwrap())
+                .add_directive("zvariant=off".parse().unwrap()),
+        )
+        .init();
+
+    tracing::info!(%level, "starting nexa daemon");
 
     let state = DaemonState::new();
-    let mut mpris = Mpris::new().await?;
-    let conn = mpris.connection();
     let cache = ImageCache::new()?;
 
-    // Server can run independently (it only needs the shared DBus connection).
-    let server_handle = tokio::spawn(server::run(state.clone(), conn.clone(), cache.clone()));
+    let conn = Connection::session().await?;
+    let shared_conn = Arc::new(Mutex::new(conn));
 
-    // Supervisor owns the `Mpris` receiver loop (it needs `&mut Mpris`).
-    supervisor::run(state.clone(), &mut mpris).await?;
+    let supervisor_task = {
+        let state = state.clone();
+        let conn = shared_conn.clone();
+        tokio::spawn(async move {
+            if let Err(e) = supervisor::run(state, conn).await {
+                tracing::error!(error = %e, "supervisor crashed");
+            }
+        })
+    };
 
-    // If supervisor exits, stop the server too.
-    server_handle.abort();
+    let _ticker_task = {
+        let state = state.clone();
+        tokio::spawn(async move {
+            ticker::run(state, ticker_rx).await;
+        })
+    };
+
+    let server_task = {
+        let state = state.clone();
+        let conn = shared_conn.clone();
+        let ticker_tx = ticker_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = server::run(state, conn, cache, ticker_tx).await {
+                tracing::error!(error = %e, "ipc server crashed");
+            }
+        })
+    };
+
+    tokio::select! {
+        _ = supervisor_task => {
+            tracing::warn!("supervisor task exited");
+        }
+        _ = server_task => {
+            tracing::warn!("server task exited");
+        }
+    }
 
     Ok(())
 }

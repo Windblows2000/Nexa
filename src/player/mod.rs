@@ -61,6 +61,7 @@ impl LivePlayer {
         }
     }
 
+    /// Get the current position, accounting for playback time if playing.
     pub fn position(&self) -> Duration {
         match self.status {
             PlayerStatus::Playing => {
@@ -89,16 +90,16 @@ impl LivePlayer {
             snapshot.metadata.track_id = self.metadata.track_id.clone();
         }
 
-        let cur_est = self.position();
-        let snap_us = snapshot.position.as_micros() as i128;
-        let cur_us = cur_est.as_micros() as i128;
-        let jumped = (snap_us - cur_us).abs() > 2_000_000;
-
         let track_changed = snapshot
             .metadata
             .track_id
             .as_deref()
             .is_some_and(|new_id| self.metadata.track_id.as_deref() != Some(new_id));
+
+        let cur_est = self.position();
+        let snap_us = snapshot.position.as_micros() as i128;
+        let cur_us = cur_est.as_micros() as i128;
+        let position_jumped = (snap_us - cur_us).abs() > 2_000_000;
 
         let was_playing = self.status == PlayerStatus::Playing;
         let now_playing = snapshot.status == PlayerStatus::Playing;
@@ -114,14 +115,17 @@ impl LivePlayer {
         self.shuffle = snapshot.shuffle;
         self.loop_status = snapshot.loop_status;
 
-        if !(!now_playing && !track_changed || was_playing && !track_changed && !jumped) {
+        if track_changed || position_jumped {
             self.reanchor_position(now, snapshot.position);
+        } else if !was_playing && now_playing {
+            self.anchor_timestamp = now;
         }
 
         self.last_activity = now;
         self.last_activity_priority = prio;
     }
 
+    /// Apply a status-only update.
     pub fn apply_status(&mut self, new_status: PlayerStatus) {
         let now = Instant::now();
         let was_playing = self.status == PlayerStatus::Playing;
@@ -140,6 +144,8 @@ impl LivePlayer {
 
     pub fn apply_metadata(&mut self, mut md: TrackMetadata) {
         let now = Instant::now();
+
+        // Preserve track_id if not provided
         if md.track_id.is_none() {
             md.track_id = self.metadata.track_id.clone();
         } else if md.track_id != self.metadata.track_id {
@@ -155,13 +161,10 @@ impl LivePlayer {
         let now = Instant::now();
         self.reanchor_position(now, position);
 
-        // Don’t let position ticks reduce “importance”
         self.last_activity = now;
-        if self.last_activity_priority < ActivityPriority::PositionUpdate {
-            self.last_activity_priority = ActivityPriority::PositionUpdate;
-        }
-        // OR better: keep the max priority you’ve seen recently
-        // self.last_activity_priority = self.last_activity_priority.max(ActivityPriority::PositionUpdate);
+        self.last_activity_priority = self
+            .last_activity_priority
+            .max(ActivityPriority::PositionUpdate);
     }
 
     pub fn snapshot(&self) -> PlayerStateSnapshot {

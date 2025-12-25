@@ -32,7 +32,10 @@ fn format_duration(secs: u64) -> String {
     }
 }
 
-/// Convert a file:// URI to a filesystem path (spec-correct).
+pub struct FormatSpec {
+    pub needs_elapsed: bool,
+}
+
 fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     let url = Url::parse(uri).ok()?;
     url.to_file_path().ok()
@@ -44,7 +47,6 @@ fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
 fn resolve_art_outputs(s: &PlayerSnapshotOut) -> (String, String) {
     let art_url = s.art_url.clone().unwrap_or_default();
 
-    // Prefer daemon-provided art_path (the whole point of the refactor)
     if let Some(p) = &s.art_path {
         let path = p.display().to_string();
         trace!(path = %path, "Using resolved art_path from daemon");
@@ -71,15 +73,6 @@ fn resolve_art_outputs(s: &PlayerSnapshotOut) -> (String, String) {
     (art_url, String::new())
 }
 
-/// Very small templater compatible with the existing CLI placeholders.
-///
-/// Supported keys (all optional / safe):
-/// - {title} {artist} {album} {status} {player}
-/// - {elapsed} {length}
-/// - {rate} {volume} {shuffle} {loop}
-/// - {art_url}
-/// - {art_path}
-/// - {cached_art_path} (alias of art_path for backward compatibility)
 pub fn format_template(tpl: &str, s: &PlayerSnapshotOut) -> String {
     trace!(
         player = %s.player_id,
