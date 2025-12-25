@@ -27,7 +27,6 @@ use zbus::fdo::DBusProxy;
 pub async fn run(state: SharedState, conn: SharedConnection) -> Result<()> {
     debug!(target: "nexa::daemon::supervisor", "Initializing supervisor");
 
-    // Startup: find existing players
     if let Ok(buses) = list_players(&conn).await {
         for bus in buses {
             let state = state.clone();
@@ -61,7 +60,6 @@ pub async fn run(state: SharedState, conn: SharedConnection) -> Result<()> {
                     }
                 });
             } else {
-                // Secondary safety: handle explicit name loss
                 debug!(target: "nexa::daemon::supervisor", bus = %name, "Player left bus");
                 state.remove_player(name).await;
             }
@@ -75,8 +73,8 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
 
     if let Ok(snap) = snapshot_from_player(&proxy).await {
         state
-            .upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true)
-            .await;
+        .upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true)
+        .await;
     }
 
     let mut status_changes = proxy.receive_playback_status_changed().await;
@@ -106,17 +104,31 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
                 }
             }
             res = seek_stream.next() => {
-                if res.is_none() { break };
-                if let Some(sig) = res
-                    && let Ok(args) = sig.args() {
-                        trace!(target: "nexa::daemon::supervisor", %bus, pos = args.position(), "Seek detected");
-                        // Optional: Apply position update to state if needed
-                    }
+                let Some(sig) = res else {
+                    debug!(target: "nexa::daemon::supervisor", %bus, "Seek stream closed");
+                    break;
+                };
+
+                if let Ok(args) = sig.args() {
+                    let new_pos = args.position();
+                    trace!(target: "nexa::daemon::supervisor", %bus, pos = new_pos, "Seek detected");
+
+                    let update = PlayerUpdate {
+                        position_micros: Some(*new_pos),
+                        ..Default::default()
+                    };
+
+                    state.apply_update_id_selective(
+                        &bus,
+                        update,
+                        ActivityPriority::StatusUpdate,
+                        true
+                    ).await;
+                }
             }
         }
     }
 
-    // Clean up when the player drops or the loop breaks
     debug!(target: "nexa::daemon::supervisor", %bus, "Removing player from state");
     state.remove_player(&bus).await;
     Ok(())
