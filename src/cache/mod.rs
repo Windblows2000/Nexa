@@ -127,17 +127,12 @@ impl ImageCache {
             fs::create_dir_all(parent).await?;
         }
 
-        let resp = self
-        .client
-        .get(url)
-        .send()
-        .await?
-        .error_for_status()?;
+        let resp = self.client.get(url).send().await?.error_for_status()?;
 
-        if let Some(len) = resp.content_length() {
-            if len > MAX_OBJECT_BYTES {
-                anyhow::bail!("album art too large: {} bytes", len);
-            }
+        if let Some(len) = resp.content_length()
+            && len > MAX_OBJECT_BYTES
+        {
+            anyhow::bail!("album art too large: {} bytes", len);
         }
 
         let tmp = path.with_extension("tmp");

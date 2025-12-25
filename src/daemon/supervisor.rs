@@ -73,8 +73,8 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
 
     if let Ok(snap) = snapshot_from_player(&proxy).await {
         state
-        .upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true)
-        .await;
+            .upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true)
+            .await;
     }
 
     let mut status_changes = proxy.receive_playback_status_changed().await;
