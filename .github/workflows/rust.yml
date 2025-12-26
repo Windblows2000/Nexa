@@ -1,31 +1,40 @@
-name: Release
-
 on:
-  push:
-    tags:
-      - "v*"
-
-permissions:
-  contents: write
+  release:
+    types: [created]
 
 jobs:
-  deploy:
+  release:
+    name: Release Nexa (Linux)
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Build and Release Linux Binary (musl) + Archive
-        uses: rust-build/rust-build.action@v1.4.5
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Nexa
+        run: cargo build --release
+
+      - name: Prepare release archive
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          TARGET=x86_64-linux
+          DIST=nexa-${VERSION}-${TARGET}
+
+          mkdir -p "$DIST"
+
+          cp target/release/nexa "$DIST/"
+          cp target/release/nexad "$DIST/"
+          cp resources/systemd/nexad.service "$DIST/"
+          cp README.md LICENSE "$DIST/"
+
+          tar -czf "$DIST.tar.gz" "$DIST"
+
+      - name: Upload release artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nexa-*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          RUSTTARGET: x86_64-unknown-linux-musl
-          TOOLCHAIN_VERSION: stable
-          ARCHIVE_TYPES: tar.gz
-          MINIFY: "true"
-          UPLOAD_MODE: release
-          RELEASE_NAME: ${{ github.ref_name }}
