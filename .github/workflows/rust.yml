@@ -17,6 +17,11 @@ jobs:
       - name: Build Nexa
         run: cargo build --release
 
+      - name: Strip binaries
+        run: |
+          strip target/release/nexa
+          strip target/release/nexad
+
       - name: Prepare release archive
         run: |
           VERSION=${GITHUB_REF_NAME}
@@ -32,9 +37,13 @@ jobs:
 
           tar -czf "$DIST.tar.gz" "$DIST"
 
-      - name: Upload release artifact
+          sha256sum "$DIST.tar.gz" > "$DIST.tar.gz.sha256"
+
+      - name: Upload release artifacts
         uses: softprops/action-gh-release@v2
         with:
-          files: nexa-*.tar.gz
+          files: |
+            nexa-*.tar.gz
+            nexa-*.tar.gz.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
