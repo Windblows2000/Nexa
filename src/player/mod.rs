@@ -90,11 +90,17 @@ impl LivePlayer {
             snapshot.metadata.track_id = self.metadata.track_id.clone();
         }
 
-        let track_changed = snapshot
+        let track_id_changed = snapshot
             .metadata
             .track_id
             .as_deref()
             .is_some_and(|new_id| self.metadata.track_id.as_deref() != Some(new_id));
+
+        let metadata_changed = snapshot.metadata.title != self.metadata.title
+            || snapshot.metadata.artist != self.metadata.artist
+            || snapshot.metadata.length != self.metadata.length;
+
+        let track_changed = track_id_changed || metadata_changed;
 
         let cur_est = self.position();
         let snap_us = snapshot.position.as_micros() as i128;
@@ -109,16 +115,23 @@ impl LivePlayer {
         }
 
         self.status = snapshot.status;
+        let _new_length = snapshot.metadata.length;
+
         self.metadata = snapshot.metadata;
         self.rate = snapshot.rate;
         self.volume = snapshot.volume;
         self.shuffle = snapshot.shuffle;
         self.loop_status = snapshot.loop_status;
 
-        if track_changed || position_jumped {
+        if track_changed {
+            let pos = match snapshot.position {
+                p if p <= Duration::from_secs(3) => p,
+                _ => Duration::ZERO,
+            };
+
+            self.reanchor_position(now, pos);
+        } else if position_jumped {
             self.reanchor_position(now, snapshot.position);
-        } else if !was_playing && now_playing {
-            self.anchor_timestamp = now;
         }
 
         self.last_activity = now;
