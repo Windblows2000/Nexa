@@ -243,7 +243,7 @@ pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
 //
 
 pub async fn handle_cache(cmd: CacheCmd) -> Result<()> {
-    let cache = ImageCache::new()?;
+    let cache = ImageCache::new().await?;
 
     match cmd {
         CacheCmd::Info => {

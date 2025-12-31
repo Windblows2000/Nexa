@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
     tracing::info!(%level, "starting nexa daemon");
 
     let state = DaemonState::new();
-    let cache = ImageCache::new()?;
+    let cache = ImageCache::new().await?;
 
     let conn = Connection::session().await?;
     let shared_conn = Arc::new(Mutex::new(conn));
