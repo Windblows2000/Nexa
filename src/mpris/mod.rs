@@ -17,13 +17,13 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tracing::{debug, trace, warn};
 use zbus::names::BusName;
 use zbus::{Connection, proxy, zvariant::Value};
 
-pub type SharedConnection = std::sync::Arc<Mutex<Connection>>;
+pub type SharedConnection = zbus::Connection;
 
 #[proxy(
     interface = "org.mpris.MediaPlayer2",
@@ -114,7 +114,7 @@ pub struct TrackMetadata {
     pub length: Option<Duration>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PlayerStateSnapshot {
     pub player_id: String,
     pub status: PlayerStatus,
@@ -127,8 +127,7 @@ pub struct PlayerStateSnapshot {
 }
 
 pub async fn list_players(conn: &SharedConnection) -> Result<Vec<String>> {
-    let conn = conn.lock().await.clone();
-    let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
+    let dbus = zbus::fdo::DBusProxy::new(conn).await?;
     let names = dbus.list_names().await?;
 
     let players = names
@@ -179,40 +178,34 @@ pub async fn snapshot_from_player(proxy: &MprisPlayerProxy<'_>) -> Result<Player
     let player_id = proxy.inner().destination().to_string();
     trace!(player_id, "capturing snapshot");
 
-    let status_raw = proxy.playback_status().await.unwrap_or_else(|e| {
-        warn!(player_id, error = ?e, "playback_status fetch failed");
-        "Stopped".to_string()
-    });
+    let (status_res, meta_res, pos_res, rate_res, vol_res, shuf_res, loop_res) = tokio::join!(
+        proxy.playback_status(),
+        proxy.metadata(),
+        proxy.position(),
+        proxy.rate(),
+        proxy.volume(),
+        proxy.shuffle(),
+        proxy.loop_status()
+    );
 
-    let status = match status_raw.as_str() {
+    let status = match status_res.as_deref().unwrap_or("Stopped") {
         "Playing" => PlayerStatus::Playing,
         "Paused" => PlayerStatus::Paused,
         _ => PlayerStatus::Stopped,
     };
 
-    let meta_map = proxy.metadata().await.unwrap_or_else(|e| {
-        warn!(player_id, error = ?e, "metadata fetch failed");
-        HashMap::new()
-    });
-
-    let metadata = parse_track_metadata(&meta_map);
-
-    let position_micros = proxy.position().await.unwrap_or_else(|e| {
-        trace!(player_id, error = ?e, "position unavailable");
-        0
-    });
-
-    let position = Duration::from_micros(position_micros.max(0) as u64);
+    let metadata = parse_track_metadata(&meta_res.unwrap_or_default());
+    let position = Duration::from_micros(pos_res.unwrap_or(0).max(0) as u64);
 
     Ok(PlayerStateSnapshot {
         player_id,
         status,
         metadata,
         position,
-        rate: proxy.rate().await.ok(),
-        volume: proxy.volume().await.ok(),
-        shuffle: proxy.shuffle().await.ok(),
-        loop_status: proxy.loop_status().await.ok(),
+        rate: rate_res.ok(),
+        volume: vol_res.ok(),
+        shuffle: shuf_res.ok(),
+        loop_status: loop_res.ok(),
     })
 }
 
@@ -220,12 +213,10 @@ pub async fn player_from_bus(
     conn: &SharedConnection,
     bus: &str,
 ) -> Result<MprisPlayerProxy<'static>> {
-    let conn = conn.lock().await.clone();
-
     let bus_name =
         BusName::try_from(bus.to_owned()).with_context(|| format!("invalid bus name: {bus}"))?;
 
-    MprisPlayerProxy::builder(&conn)
+    MprisPlayerProxy::builder(conn)
         .destination(bus_name)?
         .build()
         .await
@@ -233,12 +224,10 @@ pub async fn player_from_bus(
 }
 
 pub async fn root_proxy(conn: &SharedConnection, bus: &str) -> Result<MprisRootProxy<'static>> {
-    let conn = conn.lock().await.clone();
-
     let bus_name =
         BusName::try_from(bus.to_owned()).with_context(|| format!("invalid bus name: {bus}"))?;
 
-    MprisRootProxy::builder(&conn)
+    MprisRootProxy::builder(conn)
         .destination(bus_name)?
         .build()
         .await

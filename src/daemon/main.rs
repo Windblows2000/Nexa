@@ -17,8 +17,7 @@
 use anyhow::Result;
 use clap::Parser;
 use nexa::ticker;
-use std::sync::Arc;
-use tokio::sync::{Mutex, watch};
+use tokio::sync::watch;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 use zbus::Connection;
@@ -65,11 +64,10 @@ async fn main() -> Result<()> {
     let cache = ImageCache::new().await?;
 
     let conn = Connection::session().await?;
-    let shared_conn = Arc::new(Mutex::new(conn));
 
     let supervisor_task = {
         let state = state.clone();
-        let conn = shared_conn.clone();
+        let conn = conn.clone();
         tokio::spawn(async move {
             if let Err(e) = supervisor::run(state, conn).await {
                 tracing::error!(error = %e, "supervisor crashed");
@@ -86,7 +84,7 @@ async fn main() -> Result<()> {
 
     let server_task = {
         let state = state.clone();
-        let conn = shared_conn.clone();
+        let conn = conn.clone();
         let ticker_tx = ticker_tx.clone();
         tokio::spawn(async move {
             if let Err(e) = server::run(state, conn, cache, ticker_tx).await {

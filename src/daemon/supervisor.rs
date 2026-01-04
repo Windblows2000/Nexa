@@ -39,7 +39,7 @@ pub async fn run(state: SharedState, conn: SharedConnection) -> Result<()> {
         }
     }
 
-    let raw = conn.lock().await.clone();
+    let raw = conn.clone();
     let dbus = DBusProxy::new(&raw).await?;
     let mut changes = dbus.receive_name_owner_changed().await?;
 
