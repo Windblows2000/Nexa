@@ -57,17 +57,17 @@ impl Drop for InFlightGuard {
 impl ImageCache {
     pub async fn new() -> Result<Self> {
         let proj = ProjectDirs::from("com", "windblows2000", "nexa")
-        .context("cannot determine cache dir")?;
+            .context("cannot determine cache dir")?;
         let root = proj.cache_dir().join("art");
         fs::create_dir_all(&root).await?;
 
         Ok(Self {
             root,
             client: reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .user_agent("nexa/1.0")
-            .build()?,
-           in_flight: Arc::new(Mutex::new(HashMap::new())),
+                .timeout(Duration::from_secs(10))
+                .user_agent("nexa/1.0")
+                .build()?,
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -122,9 +122,9 @@ impl ImageCache {
         let (lock, guard) = {
             let mut map = self.in_flight.lock().await;
             let lock = map
-            .entry(url.to_string())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone();
+                .entry(url.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone();
             let guard = InFlightGuard {
                 url: url.to_string(),
                 map: self.in_flight.clone(),
@@ -145,9 +145,9 @@ impl ImageCache {
 
     async fn is_valid_file(&self, path: &Path) -> bool {
         fs::metadata(path)
-        .await
-        .map(|m| m.is_file() && m.len() > 0)
-        .unwrap_or(false)
+            .await
+            .map(|m| m.is_file() && m.len() > 0)
+            .unwrap_or(false)
     }
 
     async fn download_to_path(&self, url: &str, final_path: &Path) -> Result<()> {
@@ -160,11 +160,11 @@ impl ImageCache {
         }
 
         let ct_ok = resp
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.starts_with("image/"))
-        .unwrap_or(false);
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.starts_with("image/"))
+            .unwrap_or(false);
 
         if !ct_ok {
             anyhow::bail!("unexpected content type");
