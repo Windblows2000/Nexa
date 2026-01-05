@@ -153,10 +153,10 @@ impl ImageCache {
     async fn download_to_path(&self, url: &str, final_path: &Path) -> Result<()> {
         let resp = self.client.get(url).send().await?.error_for_status()?;
 
-        if let Some(len) = resp.content_length() {
-            if len > MAX_OBJECT_BYTES {
-                anyhow::bail!("object too large: {} bytes", len);
-            }
+        if let Some(len) = resp.content_length()
+            && len > MAX_OBJECT_BYTES
+        {
+            anyhow::bail!("object too large: {} bytes", len);
         }
 
         let ct_ok = resp

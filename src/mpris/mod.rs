@@ -17,11 +17,10 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 use zbus::names::BusName;
-use zbus::{Connection, proxy, zvariant::Value};
+use zbus::{proxy, zvariant::Value};
 
 pub type SharedConnection = zbus::Connection;
 
