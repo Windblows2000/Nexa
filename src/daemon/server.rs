@@ -29,11 +29,21 @@ use crate::{
     ipc::{CompatMode, Request, Target, decode_request, send, socket_path},
 };
 
+struct TickDemandGuard {
+    tx: tokio::sync::watch::Sender<usize>,
+}
+
+impl Drop for TickDemandGuard {
+    fn drop(&mut self) {
+        self.tx.send_modify(|v| *v = v.saturating_sub(1));
+    }
+}
+
 pub async fn run(
     state: SharedState,
     conn: crate::mpris::SharedConnection,
     cache: ImageCache,
-    ticker_tx: tokio::sync::watch::Sender<bool>,
+    ticker_tx: tokio::sync::watch::Sender<usize>,
 ) -> Result<()> {
     let path = socket_path();
 
@@ -76,7 +86,7 @@ async fn handle_conn(
     state: SharedState,
     conn: crate::mpris::SharedConnection,
     cache: ImageCache,
-    ticker_tx: tokio::sync::watch::Sender<bool>,
+    ticker_tx: tokio::sync::watch::Sender<usize>,
     stream: UnixStream,
 ) -> Result<()> {
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
@@ -97,11 +107,21 @@ async fn handle_conn(
                     .map(|f| f.contains("{elapsed}"))
                     .unwrap_or(false);
 
-                if needs_elapsed {
-                    let _ = ticker_tx.send(true);
-                }
+                let _tick_guard = if needs_elapsed {
+                    ticker_tx.send_modify(|v| *v += 1);
+                    Some(TickDemandGuard {
+                        tx: ticker_tx.clone(),
+                    })
+                } else {
+                    None
+                };
 
-                debug!(?target, ?format, "Client entering Follow mode");
+                debug!(
+                    ?target,
+                    ?format,
+                    needs_elapsed,
+                    "Client entering Follow mode"
+                );
 
                 handle_follow(
                     state.clone(),
@@ -112,10 +132,6 @@ async fn handle_conn(
                     compat,
                 )
                 .await?;
-
-                if needs_elapsed {
-                    let _ = ticker_tx.send(false);
-                }
 
                 debug!("Client exited Follow mode");
                 break;

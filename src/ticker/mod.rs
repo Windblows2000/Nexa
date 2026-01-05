@@ -20,9 +20,8 @@ use tracing::{debug, trace};
 
 use crate::daemon::state::DaemonState;
 
-pub async fn run(state: DaemonState, mut enabled_rx: watch::Receiver<bool>) {
+pub async fn run(state: DaemonState, mut demand_rx: watch::Receiver<usize>) {
     let mut interval: Option<Interval> = None;
-    let mut tick_count: u64 = 0;
 
     loop {
         tokio::select! {
@@ -33,21 +32,24 @@ pub async fn run(state: DaemonState, mut enabled_rx: watch::Receiver<bool>) {
                     futures::future::pending::<()>().await;
                 }
             } => {
-                tick_count += 1;
-                trace!(tick_count, "ticker: tick fired; calling rebroadcast()");
+                trace!("ticker: tick fired; rebroadcasting");
                 state.rebroadcast().await;
             }
 
-            Ok(_) = enabled_rx.changed() => {
-                let enabled = *enabled_rx.borrow();
-                debug!(enabled, "ticker: enabled changed");
+            Ok(_) = demand_rx.changed() => {
+                let demand = *demand_rx.borrow();
+                trace!(demand, "ticker: demand changed");
 
-                if enabled {
-                    interval = Some(second_aligned_interval());
-                    debug!("ticker: interval enabled");
-                } else {
-                    interval = None;
-                    debug!("ticker: interval disabled");
+                match (demand > 0, interval.is_some()) {
+                    (true, false) => {
+                        interval = Some(second_aligned_interval());
+                        debug!("ticker: enabled");
+                    }
+                    (false, true) => {
+                        interval = None;
+                        debug!("ticker: disabled");
+                    }
+                    _ => {}
                 }
             }
         }

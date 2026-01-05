@@ -38,7 +38,7 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let (ticker_tx, ticker_rx) = watch::channel(false);
+    let (ticker_tx, ticker_rx) = watch::channel::<usize>(0);
 
     let level = match args.verbose {
         0 => LevelFilter::INFO,
