@@ -80,8 +80,8 @@ pub fn format_template(tpl: &str, s: &PlayerSnapshotOut) -> String {
         "Formatting template"
     );
 
-    let length = s.length_seconds.map(format_duration).unwrap_or_default();
-    let elapsed = format_duration(s.elapsed_seconds);
+    let length = s.length.map(format_duration).unwrap_or_default();
+    let elapsed = format_duration(s.elapsed);
 
     let rate_s = s.rate.map(|v| v.to_string()).unwrap_or_default();
     let volume_s = s.volume.map(|v| v.to_string()).unwrap_or_default();

@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
             }
             Response::Position(seconds) => {
                 if let Some(mut snap) = last_snapshot.clone() {
-                    snap.elapsed_seconds = seconds;
+                    snap.elapsed = seconds;
                     nexa::cli::print_metadata(&snap, template, output_mode)?;
                     last_snapshot = Some(snap);
                 }
