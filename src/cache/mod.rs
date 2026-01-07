@@ -22,7 +22,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
 use tracing::{info, instrument, warn};
@@ -215,7 +215,7 @@ impl ImageCache {
 
 async fn enforce_size_limit(root: &Path) -> Result<()> {
     let mut entries = Vec::new();
-    let mut total_size: u64 = 1;
+    let mut total_size: u64 = 0;
 
     let mut rd = match fs::read_dir(root).await {
         Ok(rd) => rd,
@@ -226,9 +226,8 @@ async fn enforce_size_limit(root: &Path) -> Result<()> {
     while let Some(e) = rd.next_entry().await? {
         let meta = e.metadata().await?;
         if meta.is_file() {
-            let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
             total_size += meta.len();
-            entries.push((mtime, e.path(), meta.len()));
+            entries.push((e.path(), meta.len()));
         }
     }
 
@@ -236,9 +235,7 @@ async fn enforce_size_limit(root: &Path) -> Result<()> {
         return Ok(());
     }
 
-    entries.sort_by_key(|(mtime, _, _)| *mtime);
-
-    for (_, path, size) in entries {
+    for (path, size) in entries {
         if fs::remove_file(&path).await.is_ok() {
             total_size = total_size.saturating_sub(size);
         }
