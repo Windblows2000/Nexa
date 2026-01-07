@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::time::{Duration, Instant};
+use tracing::{debug, info};
 
 use crate::mpris::{PlayerStateSnapshot, PlayerStatus, TrackMetadata};
 
@@ -61,7 +62,6 @@ impl LivePlayer {
         }
     }
 
-    /// Get the current position, accounting for playback time if playing.
     pub fn position(&self) -> Duration {
         match self.status {
             PlayerStatus::Playing => {
@@ -90,33 +90,20 @@ impl LivePlayer {
             snapshot.metadata.track_id = self.metadata.track_id.clone();
         }
 
-        let track_id_changed = snapshot
-            .metadata
-            .track_id
-            .as_deref()
-            .is_some_and(|new_id| self.metadata.track_id.as_deref() != Some(new_id));
-
-        let metadata_changed = snapshot.metadata.title != self.metadata.title
-            || snapshot.metadata.artist != self.metadata.artist
-            || snapshot.metadata.length != self.metadata.length;
-
-        let track_changed = track_id_changed || metadata_changed;
+        let track_changed = snapshot.metadata.track_id != self.metadata.track_id
+            || snapshot.metadata.title != self.metadata.title
+            || snapshot.metadata.artist != self.metadata.artist;
 
         let cur_est = self.position();
-        let snap_us = snapshot.position.as_micros() as i128;
-        let cur_us = cur_est.as_micros() as i128;
-        let position_jumped = (snap_us - cur_us).abs() > 2_000_000;
+        let drift = snapshot.position.abs_diff(cur_est);
 
-        let was_playing = self.status == PlayerStatus::Playing;
-        let now_playing = snapshot.status == PlayerStatus::Playing;
+        let position_jumped = drift > Duration::from_millis(1200);
 
-        if was_playing && !now_playing {
+        if self.status == PlayerStatus::Playing && snapshot.status != PlayerStatus::Playing {
             self.freeze_position(now);
         }
 
         self.status = snapshot.status;
-        let _new_length = snapshot.metadata.length;
-
         self.metadata = snapshot.metadata;
         self.rate = snapshot.rate;
         self.volume = snapshot.volume;
@@ -124,13 +111,15 @@ impl LivePlayer {
         self.loop_status = snapshot.loop_status;
 
         if track_changed {
-            let pos = match snapshot.position {
-                p if p <= Duration::from_secs(3) => p,
-                _ => Duration::ZERO,
+            info!(id = %self.player_id, pos = ?snapshot.position, "Track changed, re-anchoring");
+            let pos = if snapshot.position <= Duration::from_secs(3) {
+                snapshot.position
+            } else {
+                Duration::ZERO
             };
-
             self.reanchor_position(now, pos);
         } else if position_jumped {
+            debug!(id = %self.player_id, drift = ?drift, "Seek detected, re-anchoring");
             self.reanchor_position(now, snapshot.position);
         }
 
@@ -138,18 +127,19 @@ impl LivePlayer {
         self.last_activity_priority = prio;
     }
 
-    /// Apply a status-only update.
     pub fn apply_status(&mut self, new_status: PlayerStatus) {
-        let now = Instant::now();
-        let was_playing = self.status == PlayerStatus::Playing;
-        let now_playing = new_status == PlayerStatus::Playing;
-
-        if was_playing && !now_playing {
-            self.freeze_position(now);
-        } else if !was_playing && now_playing {
-            self.anchor_timestamp = now;
+        if self.status == new_status {
+            return;
         }
 
+        let now = Instant::now();
+        match (self.status, new_status) {
+            (PlayerStatus::Playing, _) => self.freeze_position(now),
+            (_, PlayerStatus::Playing) => self.anchor_timestamp = now,
+            _ => {}
+        }
+
+        debug!(id = %self.player_id, from = ?self.status, to = ?new_status, "Status transition");
         self.status = new_status;
         self.last_activity = now;
         self.last_activity_priority = ActivityPriority::StatusUpdate;
@@ -157,12 +147,13 @@ impl LivePlayer {
 
     pub fn apply_metadata(&mut self, mut md: TrackMetadata) {
         let now = Instant::now();
-
-        // Preserve track_id if not provided
         if md.track_id.is_none() {
             md.track_id = self.metadata.track_id.clone();
-        } else if md.track_id != self.metadata.track_id {
-            self.reanchor_position(now, Duration::from_secs(0));
+        }
+
+        if md.track_id != self.metadata.track_id {
+            info!(id = %self.player_id, "Metadata track_id changed");
+            self.reanchor_position(now, Duration::ZERO);
         }
 
         self.metadata = md;
@@ -172,8 +163,15 @@ impl LivePlayer {
 
     pub fn apply_position_update(&mut self, position: Duration) {
         let now = Instant::now();
-        self.reanchor_position(now, position);
+        let cur_est = self.position();
 
+        let drift = position.abs_diff(cur_est);
+        if drift < Duration::from_millis(150) {
+            return;
+        }
+
+        debug!(id = %self.player_id, position = ?position, drift = ?drift, "Position sync");
+        self.reanchor_position(now, position);
         self.last_activity = now;
         self.last_activity_priority = self
             .last_activity_priority
