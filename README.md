@@ -24,6 +24,7 @@ A modern media controller written in Rust. Nexa works with any MPRIS-compatible 
 
 ### CLI
 
+
 ```bash
 ❯ nexa
 A Powerful, Rust-Based CLI Linux Tool for your Media Needs.
@@ -45,10 +46,64 @@ Options:
   -h, --help        Print help
   -V, --version     Print version
 ```
+### Custom Output Formatting (--format)
+
+The --format option allows you to define custom text output using a
+template string. Any text is printed verbatim, while placeholders wrapped
+in {} are replaced with live metadata from the active player.
+
+example:
+```bash
+nexa metadata --format "Title: {title} ({elapsed}/{length})"
+```
+
+### Available Fields
+Track Information
+| Field      | Description  |
+| ---------- | ------------ |
+| `{title}`  | Track title  |
+| `{artist}` | Track artist |
+| `{album}`  | Album name   |
+
+Playback State
+| Field      | Description                                      |
+| ---------- | ------------------------------------------------ |
+| `{status}` | Playback status (`Playing`, `Paused`, `Stopped`) |
+| `{player}` | Active MPRIS player bus name                     |
+
+Time & Playback
+| Field       | Description                              |
+| ----------- | ---------------------------------------- |
+| `{elapsed}` | Elapsed playback time (MM:SS or H:MM:SS) |
+| `{length}`  | Total track duration                     |
+| `{rate}`    | Playback speed multiplier                |
+
+Volume & Modes
+| Field       | Description                                  |
+| ----------- | -------------------------------------------- |
+| `{volume}`  | Volume as a floating-point value (`0.0–1.0`) |
+| `{shuffle}` | Shuffle state (`on` / `off`)                 |
+| `{loop}`    | Loop mode (`None`, `Track`, `Playlist`)      |
+
+Artwork
+| Field        | Description               |
+| ------------ | ------------------------- |
+| `{art_url}`  | Remote artwork URL        |
+| `{art_path}` | Local cached artwork path |
+
+
 
 ### Getting Started
 
 It's easy! Just follow the instructions below:
+
+### Pre-built Binary
+
+Grab the compiled binary from [here](https://github.com/Windblows2000/Nexa/releases).
+
+### Build From Source
+
+If you rather use Cargo or remain on the latest commits, 
 
 1- clone the repo and install Nexa.
 ```bash
@@ -68,19 +123,20 @@ The daemon runs per-user and automatically tracks media players as they appear o
 
 ### Contributing
 
-For contributions, please read below.
+Contributions are welcome!
 
-* For pull requests:
+### Pull Requests
 
-1- Fork the repo
+* Fork the repository
 
-2- Create the changes
+* Make your changes
 
-3- Submit a pull request (PR)
+* Submit a pull request
 
-* For issues:
+### Issues
 
-Please provide as much information as possible in your issue (logs, output, etc...). 
+Please include as much relevant information as possible (logs, output,
+steps to reproduce, etc.).
 
 
 ### License
