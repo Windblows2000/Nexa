@@ -139,7 +139,7 @@ pub async fn list_players(conn: &SharedConnection) -> Result<Vec<String>> {
     Ok(players)
 }
 
-fn parse_track_metadata(meta_map: &HashMap<String, Value<'static>>) -> TrackMetadata {
+pub(crate) fn parse_track_metadata(meta_map: &HashMap<String, Value<'_>>) -> TrackMetadata {
     let title = meta_map.get("xesam:title").and_then(|v| v.try_into().ok());
     let album = meta_map.get("xesam:album").and_then(|v| v.try_into().ok());
     let art_url = meta_map.get("mpris:artUrl").and_then(|v| v.try_into().ok());

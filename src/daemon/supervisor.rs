@@ -21,8 +21,10 @@ use crate::{
 };
 use anyhow::Result;
 use futures_util::StreamExt;
-use tracing::{debug, trace, warn};
-use zbus::fdo::DBusProxy;
+use std::collections::HashMap;
+use tracing::{debug, warn};
+use zbus::fdo::{DBusProxy, PropertiesProxy};
+use zbus::zvariant::Value;
 
 pub async fn run(state: SharedState, conn: SharedConnection) -> Result<()> {
     debug!(target: "nexa::daemon::supervisor", "Initializing supervisor");
@@ -77,59 +79,64 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
             .await;
     }
 
-    let mut status_changes = proxy.receive_playback_status_changed().await;
-    let mut meta_changes = proxy.receive_metadata_changed().await;
+    let props_proxy = PropertiesProxy::builder(&conn)
+        .destination(bus.clone())?
+        .path("/org/mpris/MediaPlayer2")?
+        .build()
+        .await?;
+
+    let mut property_changes = props_proxy.receive_properties_changed().await?;
     let mut seek_stream = proxy.receive_seeked().await?;
 
     loop {
         tokio::select! {
-            res = status_changes.next() => {
+            res = property_changes.next() => {
                 let Some(sig) = res else { break };
-                if let Ok(new_status) = sig.get().await {
-                    let update = PlayerUpdate {
-                        status: Some(match new_status.as_str() {
+                let args = sig.args()?;
+                let changed = args.changed_properties();
+
+                let mut update = PlayerUpdate::default();
+                let mut has_changes = false;
+
+                if let Some(val) = changed.get("Metadata")
+                    && let Ok(dict) = <HashMap<String, Value>>::try_from(val.clone()) {
+                        update.metadata = Some(crate::mpris::parse_track_metadata(&dict));
+                        has_changes = true;
+                    }
+
+                if let Some(val) = changed.get("PlaybackStatus")
+                    && let Ok(s) = <&str>::try_from(val) {
+                        update.status = Some(match s {
                             "Playing" => PlayerStatus::Playing,
                             "Paused" => PlayerStatus::Paused,
                             _ => PlayerStatus::Stopped,
-                        }),
+                        });
+                        has_changes = true;
+                    }
+
+                if let Some(val) = changed.get("Volume")
+                    && let Ok(v) = f64::try_from(val) {
+                        update.volume = Some(v);
+                        has_changes = true;
+                    }
+
+                if has_changes {
+                    state.apply_update_id_selective(&bus, update, ActivityPriority::StatusUpdate, true).await;
+                }
+            }
+            res = seek_stream.next() => {
+                let Some(sig) = res else { break };
+                if let Ok(args) = sig.args() {
+                    let update = PlayerUpdate {
+                        position_micros: Some(*args.position()),
                         ..Default::default()
                     };
                     state.apply_update_id_selective(&bus, update, ActivityPriority::StatusUpdate, true).await;
                 }
             }
-            res = meta_changes.next() => {
-                if res.is_none() { break };
-                if let Ok(snap) = snapshot_from_player(&proxy).await {
-                    state.upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true).await;
-                }
-            }
-            res = seek_stream.next() => {
-                let Some(sig) = res else {
-                    debug!(target: "nexa::daemon::supervisor", %bus, "Seek stream closed");
-                    break;
-                };
-
-                if let Ok(args) = sig.args() {
-                    let new_pos = args.position();
-                    trace!(target: "nexa::daemon::supervisor", %bus, pos = new_pos, "Seek detected");
-
-                    let update = PlayerUpdate {
-                        position_micros: Some(*new_pos),
-                        ..Default::default()
-                    };
-
-                    state.apply_update_id_selective(
-                        &bus,
-                        update,
-                        ActivityPriority::StatusUpdate,
-                        true
-                    ).await;
-                }
-            }
         }
     }
 
-    debug!(target: "nexa::daemon::supervisor", %bus, "Removing player from state");
     state.remove_player(&bus).await;
     Ok(())
 }
