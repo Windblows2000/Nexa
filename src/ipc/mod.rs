@@ -21,7 +21,6 @@
 
 use crate::ipc::version::PROTOCOL_VERSION;
 use anyhow::Result;
-use clap::ValueEnum;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -175,8 +174,6 @@ pub enum Request {
     },
     Metadata {
         target: Target,
-        format: Option<String>,
-        compat: Option<CompatMode>,
     },
 
     Command {
@@ -186,14 +183,8 @@ pub enum Request {
     /// Stream updates; server will keep sending Metadata responses.
     Follow {
         target: Target,
-        format: Option<String>,
-        compat: Option<CompatMode>,
+        with_time: bool,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
-pub enum CompatMode {
-    Playerctl,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

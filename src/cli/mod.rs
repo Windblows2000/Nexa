@@ -217,17 +217,31 @@ pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
             target: parse_selector(player)?,
         },
 
-        Cmd::Metadata { player, format, .. } => Request::Metadata {
+        Cmd::Metadata { player, .. } => Request::Metadata {
             target: parse_selector(player)?,
-            format: format.clone(),
-            compat: None,
         },
 
-        Cmd::Follow { player, format, .. } => Request::Follow {
-            target: parse_selector(player)?,
-            format: format.clone(),
-            compat: None,
-        },
+        Cmd::Follow {
+            player,
+            format,
+            out,
+            ..
+        } => {
+            let mode = out.resolve(OutputMode::Json, format.is_some());
+
+            let with_time = match mode {
+                OutputMode::Text => format
+                    .as_deref()
+                    .map(|f| f.contains("{elapsed}") || f.contains("{position}"))
+                    .unwrap_or(false),
+                OutputMode::Json | OutputMode::Toml => true,
+            };
+
+            Request::Follow {
+                target: parse_selector(player)?,
+                with_time,
+            }
+        }
 
         Cmd::Command { player, cmd } => Request::Command {
             target: parse_selector(player)?,
@@ -266,22 +280,29 @@ pub async fn handle_cache(cmd: CacheCmd) -> Result<()> {
 // ===== Output =====
 //
 
-const DEFAULT_METADATA_FORMAT: &str = "{status} {artist} - {title}";
-
 pub fn print_metadata(
     snap: &PlayerSnapshotOut,
     format: Option<&str>,
     mode: OutputMode,
 ) -> Result<()> {
     match mode {
-        OutputMode::Json => println!("{}", serde_json::to_string_pretty(snap)?),
-        OutputMode::Toml => println!("{}", toml::to_string(snap)?),
+        OutputMode::Json => {
+            println!("{}", serde_json::to_string_pretty(snap)?);
+        }
+        OutputMode::Toml => {
+            println!("{}", toml::to_string(snap)?);
+        }
         OutputMode::Text => {
-            let tpl = format.unwrap_or(DEFAULT_METADATA_FORMAT);
+            let tpl = match format {
+                Some(tpl) => tpl,
+                None => anyhow::bail!("text output requires --format"),
+            };
+
             let out = crate::output::format_template(tpl, snap);
             println!("{out}");
         }
     }
+
     Ok(())
 }
 

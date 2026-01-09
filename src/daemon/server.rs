@@ -26,7 +26,7 @@ use crate::{
     cache::ImageCache,
     control::emit_snapshot,
     daemon::state::SharedState,
-    ipc::{CompatMode, Request, Target, decode_request, send, socket_path},
+    ipc::{Request, Target, decode_request, send, socket_path},
 };
 
 struct TickDemandGuard {
@@ -97,17 +97,8 @@ async fn handle_conn(
         trace!(request = ?req, "Received IPC request");
 
         match req {
-            Request::Follow {
-                target,
-                format,
-                compat,
-            } => {
-                let needs_elapsed = format
-                    .as_deref()
-                    .map(|f| f.contains("{elapsed}"))
-                    .unwrap_or(false);
-
-                let _tick_guard = if needs_elapsed {
+            Request::Follow { target, with_time } => {
+                let _tick_guard = if with_time {
                     ticker_tx.send_modify(|v| *v += 1);
                     Some(TickDemandGuard {
                         tx: ticker_tx.clone(),
@@ -116,22 +107,9 @@ async fn handle_conn(
                     None
                 };
 
-                debug!(
-                    ?target,
-                    ?format,
-                    needs_elapsed,
-                    "Client entering Follow mode"
-                );
+                debug!(?target, with_time, "Client entering Follow mode");
 
-                handle_follow(
-                    state.clone(),
-                    &cache,
-                    &mut framed,
-                    target,
-                    format.as_deref(),
-                    compat,
-                )
-                .await?;
+                handle_follow(state.clone(), &cache, &mut framed, target).await?;
 
                 debug!("Client exited Follow mode");
                 break;
@@ -153,8 +131,6 @@ async fn handle_follow(
     cache: &ImageCache,
     framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
     target: Target,
-    _format: Option<&str>,
-    _compat: Option<CompatMode>,
 ) -> Result<()> {
     let mut rx = state.subscribe();
     let mut follow_state = crate::daemon::state::FollowState::default();
