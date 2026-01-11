@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::ipc::send;
+use crate::output::format_duration;
 use crate::{
     cache::ImageCache,
     daemon::state::SharedState,
@@ -81,7 +82,7 @@ async fn handle_request_inner(
         }
 
         Request::Command { target, cmd } => {
-            match target {
+            let msg = match target {
                 Target::All { filter } => {
                     let ids = apply_filter(mpris::list_players(&conn).await?, filter);
                     for id in ids {
@@ -89,13 +90,14 @@ async fn handle_request_inner(
                             .await
                             .with_context(|| format!("command failed for {id}"))?;
                     }
+                    None
                 }
                 _ => {
                     let id = resolve_one_player(&state, &conn, target).await?;
-                    execute_command(&state, conn.clone(), &id, &cmd).await?;
+                    execute_command(&state, conn.clone(), &id, &cmd).await?
                 }
-            }
-            Ok(Response::Ok)
+            };
+            Ok(Response::Ok(msg))
         }
 
         Request::Ping => Ok(Response::Pong),
@@ -152,7 +154,6 @@ async fn get_snapshot_cached(
     }
 
     let proxy = mpris::player_from_bus(conn, player_id).await?;
-
     let snap = mpris::snapshot_from_player(&proxy).await?;
 
     state
@@ -170,26 +171,51 @@ async fn execute_command(
     conn: mpris::SharedConnection,
     player_id: &str,
     cmd: &Command,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let player = mpris::player_from_bus(&conn, player_id).await?;
 
     match cmd {
-        Command::Play => player.play().await?,
-        Command::Pause => player.pause().await?,
-        Command::PlayPause => player.play_pause().await?,
-        Command::Next => player.next().await?,
-        Command::Previous => player.previous().await?,
-        Command::Stop => player.stop().await?,
+        Command::Play => {
+            player.play().await?;
+            Ok(None)
+        }
+        Command::Pause => {
+            player.pause().await?;
+            Ok(None)
+        }
+        Command::PlayPause => {
+            player.play_pause().await?;
+            Ok(None)
+        }
+        Command::Next => {
+            player.next().await?;
+            Ok(None)
+        }
+        Command::Previous => {
+            player.previous().await?;
+            Ok(None)
+        }
+        Command::Stop => {
+            player.stop().await?;
+            Ok(None)
+        }
 
         Command::Open { uri } => {
             let proxy = mpris::root_proxy(&conn, player_id).await?;
             proxy.open_uri(uri).await?;
+            Ok(None)
         }
 
         Command::Volume { level, up, down } => {
-            let cur = player.volume().await.unwrap_or(1.0);
+            let cur = player.volume().await.unwrap_or(0.0);
+
+            if level.is_none() && up.is_none() && down.is_none() {
+                return Ok(Some(format!("{:.2}", cur)));
+            }
+
             let new = compute_volume(cur, *level, *up, *down).clamp(0.0, 1.0);
             player.set_volume(new).await?;
+            Ok(None)
         }
 
         Command::Position {
@@ -197,6 +223,12 @@ async fn execute_command(
             forward,
             backward,
         } => {
+            if set_to.is_none() && forward.is_none() && backward.is_none() {
+                let pos_micros = player.position().await.unwrap_or(0);
+                let total_secs = (pos_micros as f64 / 1_000_000.0).round() as u64;
+                return Ok(Some(format_duration(total_secs)));
+            }
+
             if let Some(f) = forward {
                 player.seek((*f as f64 * 1_000_000.0) as i64).await?;
             } else if let Some(b) = backward {
@@ -218,12 +250,15 @@ async fn execute_command(
                     .set_position(tid, (*s as f64 * 1_000_000.0) as i64)
                     .await?;
             }
+            Ok(None)
         }
 
         Command::Shuffle { state } => {
             let cur = player.shuffle().await.unwrap_or(false);
-            let new = compute_shuffle(cur, *state);
-            player.set_shuffle(new).await?;
+            let next_bool = compute_shuffle(cur, state.unwrap_or(ShuffleState::Toggle));
+            player.set_shuffle(next_bool).await?;
+            let msg = if next_bool { "On" } else { "Off" };
+            Ok(Some(msg.to_string()))
         }
 
         Command::Loop { state } => {
@@ -231,12 +266,12 @@ async fn execute_command(
                 .loop_status()
                 .await
                 .unwrap_or_else(|_| "None".to_string());
-            let next = compute_loop(&cur_str, *state);
+
+            let next = compute_loop(&cur_str, state.unwrap_or(LoopState::Toggle));
             player.set_loop_status(next.to_string()).await?;
+            Ok(Some(next.to_string()))
         }
     }
-
-    Ok(())
 }
 
 fn compute_volume(cur: f64, level: Option<f64>, up: Option<f64>, down: Option<f64>) -> f64 {
@@ -248,20 +283,20 @@ fn compute_volume(cur: f64, level: Option<f64>, up: Option<f64>, down: Option<f6
     }
 }
 
-fn compute_shuffle(cur: bool, state: Option<ShuffleState>) -> bool {
+fn compute_shuffle(cur: bool, state: ShuffleState) -> bool {
     match state {
-        Some(ShuffleState::On) => true,
-        Some(ShuffleState::Off) => false,
-        Some(ShuffleState::Toggle) | None => !cur,
+        ShuffleState::On => true,
+        ShuffleState::Off => false,
+        ShuffleState::Toggle => !cur,
     }
 }
 
-fn compute_loop(cur: &str, state: Option<LoopState>) -> &'static str {
+fn compute_loop(cur: &str, state: LoopState) -> &'static str {
     match state {
-        Some(LoopState::None) => "None",
-        Some(LoopState::Track) => "Track",
-        Some(LoopState::Playlist) => "Playlist",
-        None => match cur {
+        LoopState::None => "None",
+        LoopState::Track => "Track",
+        LoopState::Playlist => "Playlist",
+        LoopState::Toggle => match cur {
             "Track" => "Playlist",
             "Playlist" => "None",
             _ => "Track",

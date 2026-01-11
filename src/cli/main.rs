@@ -83,8 +83,19 @@ async fn main() -> Result<()> {
                     println!("{p}");
                 }
             }
-            Response::Ok => {
-                println!("ok");
+            Response::Ok(msg) => {
+                if let Some(text) = msg {
+                    let is_numeric = text.parse::<f64>().is_ok();
+                    let is_timestamp = text.contains(':');
+
+                    if is_numeric || is_timestamp {
+                        println!("{text}");
+                    } else {
+                        println!("changed state to {text}");
+                    }
+                } else {
+                    println!("ok");
+                }
             }
             Response::Pong => {}
             Response::Error(e) => {

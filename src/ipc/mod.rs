@@ -116,6 +116,7 @@ pub enum LoopState {
     None,
     Track,
     Playlist,
+    Toggle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,7 +195,7 @@ pub enum Response {
     Status(String),
     Metadata(Box<PlayerSnapshotOut>),
     Position(u64),
-    Ok,
+    Ok(Option<String>),
     Error(String),
 }
 

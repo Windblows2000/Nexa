@@ -20,7 +20,7 @@ use tracing::{debug, trace};
 use url::Url;
 
 /// Format seconds as M:SS or H:MM:SS if >= 1 hour.
-fn format_duration(secs: u64) -> String {
+pub fn format_duration(secs: u64) -> String {
     let hours = secs / 3600;
     let minutes = (secs % 3600) / 60;
     let seconds = secs % 60;
