@@ -26,6 +26,7 @@ url = "2.5"
 directories = "6.0"
 futures-util = "0.3.31"
 uuid = { version = "1.19.0", features = ["v4"] }
+infer = "0.19.0"
 
 [[bin]]
 name = "nexa"

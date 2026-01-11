@@ -78,7 +78,6 @@ impl ImageCache {
     pub async fn stats(&self) -> Result<(usize, u64)> {
         let mut count = 0;
         let mut size = 0;
-
         let mut rd = match fs::read_dir(&self.root).await {
             Ok(rd) => rd,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
@@ -92,7 +91,6 @@ impl ImageCache {
                 size += meta.len();
             }
         }
-
         Ok((count, size))
     }
 
@@ -103,19 +101,19 @@ impl ImageCache {
     }
 
     pub async fn cached_path(&self, url: &str) -> Option<PathBuf> {
-        let path = self.path_for_url(url);
-        if self.is_valid_file(&path).await {
-            Some(path)
-        } else {
-            None
+        let stem = self.stem_for_url(url);
+        for ext in ["jpg", "jpeg", "png", "webp", "gif", "bin"] {
+            let path = self.root.join(format!("{}.{}", stem, ext));
+            if self.is_valid_file(&path).await {
+                return Some(path);
+            }
         }
+        None
     }
 
     #[instrument(skip(self), fields(url = %url))]
     pub async fn ensure_cached(&self, url: &str) -> Result<PathBuf> {
-        let path = self.path_for_url(url);
-
-        if self.is_valid_file(&path).await {
+        if let Some(path) = self.cached_path(url).await {
             return Ok(path);
         }
 
@@ -135,12 +133,12 @@ impl ImageCache {
         let _lock_guard = lock.lock().await;
         let _cleanup = guard;
 
-        if self.is_valid_file(&path).await {
+        if let Some(path) = self.cached_path(url).await {
             return Ok(path);
         }
 
-        self.download_to_path(url, &path).await?;
-        Ok(path)
+        let stem = self.stem_for_url(url);
+        self.download_to_cache(url, &stem).await
     }
 
     async fn is_valid_file(&self, path: &Path) -> bool {
@@ -150,48 +148,47 @@ impl ImageCache {
             .unwrap_or(false)
     }
 
-    async fn download_to_path(&self, url: &str, final_path: &Path) -> Result<()> {
+    async fn download_to_cache(&self, url: &str, stem: &str) -> Result<PathBuf> {
         let resp = self.client.get(url).send().await?.error_for_status()?;
 
         if let Some(len) = resp.content_length()
             && len > MAX_OBJECT_BYTES
         {
-            anyhow::bail!("object too large: {} bytes", len);
+            anyhow::bail!("object too large");
         }
 
-        let ct_ok = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.starts_with("image/"))
-            .unwrap_or(false);
-
-        if !ct_ok {
-            anyhow::bail!("unexpected content type");
-        }
-
-        let tmp_path = final_path.with_extension(format!("tmp-{}", Uuid::new_v4()));
+        let tmp_path = self.root.join(format!("{}.tmp-{}", stem, Uuid::new_v4()));
         let mut file = fs::File::create(&tmp_path).await?;
         let mut downloaded: u64 = 0;
         let mut stream = resp.bytes_stream();
+        let mut first_chunk = None;
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
+            if first_chunk.is_none() {
+                first_chunk = Some(chunk.clone());
+            }
             downloaded += chunk.len() as u64;
 
             if downloaded > MAX_OBJECT_BYTES {
                 let _ = fs::remove_file(&tmp_path).await;
-                anyhow::bail!("object exceeded max size during download");
+                anyhow::bail!("exceeded max size");
             }
-
             file.write_all(&chunk).await?;
         }
 
         file.flush().await?;
         drop(file);
 
-        fs::rename(&tmp_path, final_path).await?;
-        info!(url = %url, "cached image");
+        let ext = first_chunk
+            .as_ref()
+            .and_then(|b| infer::get(b))
+            .map(|k| k.extension())
+            .unwrap_or("bin");
+
+        let final_path = self.root.join(format!("{}.{}", stem, ext));
+        fs::rename(&tmp_path, &final_path).await?;
+        info!(url = %url, path = ?final_path, "cached image");
 
         if downloaded >= CLEANUP_TRIGGER_BYTES {
             let root = self.root.clone();
@@ -202,21 +199,19 @@ impl ImageCache {
             });
         }
 
-        Ok(())
+        Ok(final_path)
     }
 
-    pub fn path_for_url(&self, url: &str) -> PathBuf {
+    fn stem_for_url(&self, url: &str) -> String {
         let mut h = Sha256::new();
         h.update(url.as_bytes());
-        let name = hex::encode(h.finalize());
-        self.root.join(name)
+        hex::encode(h.finalize())
     }
 }
 
 async fn enforce_size_limit(root: &Path) -> Result<()> {
     let mut entries = Vec::new();
     let mut total_size: u64 = 0;
-
     let mut rd = match fs::read_dir(root).await {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -243,6 +238,5 @@ async fn enforce_size_limit(root: &Path) -> Result<()> {
             break;
         }
     }
-
     Ok(())
 }
