@@ -32,10 +32,6 @@ pub fn format_duration(secs: u64) -> String {
     }
 }
 
-pub struct FormatSpec {
-    pub needs_elapsed: bool,
-}
-
 fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     let url = Url::parse(uri).ok()?;
     url.to_file_path().ok()
