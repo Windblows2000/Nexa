@@ -326,6 +326,7 @@ pub async fn snapshot_out(
 
     Ok(PlayerSnapshotOut {
         player_id: s.player_id,
+        identity: s.identity,
         status: s.status.as_str().to_string(),
         title: s.metadata.title,
         artist: s.metadata.artist,

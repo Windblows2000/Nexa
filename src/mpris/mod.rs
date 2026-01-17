@@ -84,6 +84,9 @@ pub trait MprisPlayer {
 
     #[zbus(signal)]
     fn seeked(&self, position: i64) -> zbus::Result<()>;
+
+    #[zbus(property)]
+    fn identity(&self) -> zbus::Result<String>;
 }
 
 #[derive(Debug, Copy, Clone, Hash, Serialize, Eq, PartialEq)]
@@ -116,6 +119,7 @@ pub struct TrackMetadata {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlayerStateSnapshot {
     pub player_id: String,
+    pub identity: String,
     pub status: PlayerStatus,
     pub metadata: TrackMetadata,
     pub position: Duration,
@@ -177,7 +181,16 @@ pub async fn snapshot_from_player(proxy: &MprisPlayerProxy<'_>) -> Result<Player
     let player_id = proxy.inner().destination().to_string();
     trace!(player_id, "capturing snapshot");
 
-    let (status_res, meta_res, pos_res, rate_res, vol_res, shuf_res, loop_res) = tokio::join!(
+    let identity_feat = proxy.inner().connection().call_method(
+        Some(proxy.inner().destination()),
+        proxy.inner().path(),
+        Some("org.freedesktop.DBus.Properties"),
+        "Get",
+        &("org.mpris.MediaPlayer2", "Identity"),
+    );
+
+    let (identity_res, status_res, meta_res, pos_res, rate_res, vol_res, shuf_res, loop_res) = tokio::join!(
+        identity_feat,
         proxy.playback_status(),
         proxy.metadata(),
         proxy.position(),
@@ -186,6 +199,12 @@ pub async fn snapshot_from_player(proxy: &MprisPlayerProxy<'_>) -> Result<Player
         proxy.shuffle(),
         proxy.loop_status()
     );
+
+    let identity: String = identity_res
+        .and_then(|reply| reply.body().deserialize::<zbus::zvariant::OwnedValue>())
+        .ok()
+        .and_then(|variant| variant.try_into().ok())
+        .unwrap_or_else(|| "Unknown Player".to_string());
 
     let status = match status_res.as_deref().unwrap_or("Stopped") {
         "Playing" => PlayerStatus::Playing,
@@ -198,6 +217,7 @@ pub async fn snapshot_from_player(proxy: &MprisPlayerProxy<'_>) -> Result<Player
 
     Ok(PlayerStateSnapshot {
         player_id,
+        identity,
         status,
         metadata,
         position,

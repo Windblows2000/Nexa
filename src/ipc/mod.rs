@@ -202,6 +202,7 @@ pub enum Response {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PlayerSnapshotOut {
     pub player_id: String,
+    pub identity: String,
     pub status: String,
     pub title: Option<String>,
     pub artist: Option<String>,

@@ -30,6 +30,7 @@ pub enum ActivityPriority {
 #[derive(Debug, Clone)]
 pub struct LivePlayer {
     pub player_id: String,
+    pub identity: String,
     pub status: PlayerStatus,
     pub metadata: TrackMetadata,
     pub rate: Option<f64>,
@@ -49,6 +50,7 @@ impl LivePlayer {
         let now = Instant::now();
         Self {
             player_id: snapshot.player_id,
+            identity: snapshot.identity,
             status: snapshot.status,
             metadata: snapshot.metadata,
             rate: snapshot.rate,
@@ -181,6 +183,7 @@ impl LivePlayer {
     pub fn snapshot(&self) -> PlayerStateSnapshot {
         PlayerStateSnapshot {
             player_id: self.player_id.clone(),
+            identity: self.identity.clone(),
             status: self.status,
             metadata: self.metadata.clone(),
             position: self.position(),
