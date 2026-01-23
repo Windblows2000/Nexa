@@ -5,14 +5,14 @@
 
 A modern media controller written in Rust. Nexa works with any MPRIS-compatible media player (Spotify, MPV, Firefox, Chromium, etc.). This project was born out of the desire for a "better" media controller. Especially in window managers where your only option is [Playerctl](https://github.com/altdesktop/playerctl).
 
-### Features
+## Features
 - **Blazingly fast** — Daemon + CLI design for maximum speed.
 - **Event-driven** — Subscribes to daemon signals instead of polling for metadata updates.
 - **Real-time progress** — Efficient local ticker provides smooth, accurate playback progress.
 - **Integrated album art caching** — A single command exposes a stable local path to album art / thumbnails.
 - **Structured output** — Supports JSON (default), TOML, and template-based text output via `--format`.
 
-### Examples
+## Examples
   ```bash
   nexa follow --toml #Prints out metadata in TOML
   nexa command volume --set 0.60 #Sets audio to 60%
@@ -22,7 +22,7 @@ A modern media controller written in Rust. Nexa works with any MPRIS-compatible 
   nexad #Starts the daemon.
   ```
 
-### CLI
+## CLI
 
 
 ```bash
@@ -46,7 +46,7 @@ Options:
   -h, --help        Print help
   -V, --version     Print version
 ```
-### Custom Output Formatting (--format)
+## Custom Output Formatting (--format)
 
 The --format option allows you to define custom text output using a
 template string. Any text is printed verbatim, while placeholders wrapped
@@ -93,7 +93,7 @@ Artwork
 
 
 
-### Getting Started
+## Getting Started
 
 It's easy! Just follow the instructions below:
 
@@ -121,7 +121,7 @@ systemctl --user enable --now nexad.service
 ```
 The daemon runs per-user and automatically tracks media players as they appear or disappear.
 
-### Contributing
+## Contributing
 
 Contributions are welcome!
 
@@ -139,6 +139,6 @@ Please include as much relevant information as possible (logs, output,
 steps to reproduce, etc.).
 
 
-### License
+## License
 
 This project is licensed under the **GPLv3** license.
