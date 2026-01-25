@@ -33,6 +33,13 @@ struct TickDemandGuard {
     tx: tokio::sync::watch::Sender<usize>,
 }
 
+impl TickDemandGuard {
+    fn new(tx: tokio::sync::watch::Sender<usize>) -> Self {
+        tx.send_modify(|v| *v += 1);
+        Self { tx }
+    }
+}
+
 impl Drop for TickDemandGuard {
     fn drop(&mut self) {
         self.tx.send_modify(|v| *v = v.saturating_sub(1));
@@ -99,18 +106,13 @@ async fn handle_conn(
         match req {
             Request::Follow { target, with_time } => {
                 let _tick_guard = if with_time {
-                    ticker_tx.send_modify(|v| *v += 1);
-                    Some(TickDemandGuard {
-                        tx: ticker_tx.clone(),
-                    })
+                    Some(TickDemandGuard::new(ticker_tx.clone()))
                 } else {
                     None
                 };
 
                 debug!(?target, with_time, "Client entering Follow mode");
-
                 handle_follow(state.clone(), &cache, &mut framed, target).await?;
-
                 debug!("Client exited Follow mode");
                 break;
             }
