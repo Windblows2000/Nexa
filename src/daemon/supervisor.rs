@@ -120,6 +120,18 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
                         has_changes = true;
                     }
 
+                    if let Some(val) = changed.get("Shuffle")
+                        && let Ok(b) = bool::try_from(val) {
+                            update.shuffle = Some(b);
+                            has_changes = true;
+                        }
+
+                        if let Some(val) = changed.get("LoopStatus")
+                            && let Ok(s) = <&str>::try_from(val) {
+                                update.loop_status = Some(s.to_string());
+                                has_changes = true;
+                            }
+
                 if has_changes {
                     state.apply_update_id_selective(&bus, update, ActivityPriority::StatusUpdate, true).await;
                 }
