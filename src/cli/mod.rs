@@ -86,8 +86,12 @@ pub enum Cmd {
 
     /// Show current playback status.
     Status {
-        #[arg(long, default_value = "best")]
+        #[arg(long, default_value = "best", conflicts_with = "all")]
         player: String,
+
+        /// Target all available players
+        #[arg(long, short)]
+        all: bool,
 
         #[command(flatten)]
         out: OutputArgs,
@@ -95,8 +99,12 @@ pub enum Cmd {
 
     /// Print current metadata once.
     Metadata {
-        #[arg(long, default_value = "best")]
+        #[arg(long, default_value = "best", conflicts_with = "all")]
         player: String,
+
+        /// Target all available players
+        #[arg(long, short)]
+        all: bool,
 
         /// Template for text output
         #[arg(long)]
@@ -108,8 +116,12 @@ pub enum Cmd {
 
     /// Stream metadata updates.
     Follow {
-        #[arg(long, default_value = "best")]
+        #[arg(long, default_value = "best", conflicts_with = "all")]
         player: String,
+
+        /// Target all available players
+        #[arg(long, short)]
+        all: bool,
 
         /// Template for text output
         #[arg(long)]
@@ -121,8 +133,12 @@ pub enum Cmd {
 
     /// Send a playback control command.
     Command {
-        #[arg(long, default_value = "best")]
+        #[arg(long, default_value = "best", conflicts_with = "all")]
         player: String,
+
+        /// Target all available players
+        #[arg(long, short)]
+        all: bool,
 
         #[command(subcommand)]
         cmd: ControlCmd,
@@ -213,16 +229,25 @@ pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
             filter: filter.clone(),
         },
 
-        Cmd::Status { player, .. } => Request::Status {
-            target: parse_selector(player)?,
+        Cmd::Status { player, all, .. } => Request::Status {
+            target: if *all {
+                Target::All { filter: None }
+            } else {
+                parse_selector(player)?
+            },
         },
 
-        Cmd::Metadata { player, .. } => Request::Metadata {
-            target: parse_selector(player)?,
+        Cmd::Metadata { player, all, .. } => Request::Metadata {
+            target: if *all {
+                Target::All { filter: None }
+            } else {
+                parse_selector(player)?
+            },
         },
 
         Cmd::Follow {
             player,
+            all,
             format,
             out,
             ..
@@ -238,13 +263,21 @@ pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
             };
 
             Request::Follow {
-                target: parse_selector(player)?,
+                target: if *all {
+                    Target::All { filter: None }
+                } else {
+                    parse_selector(player)?
+                },
                 with_time,
             }
         }
 
-        Cmd::Command { player, cmd } => Request::Command {
-            target: parse_selector(player)?,
+        Cmd::Command { player, all, cmd } => Request::Command {
+            target: if *all {
+                Target::All { filter: None }
+            } else {
+                parse_selector(player)?
+            },
             cmd: control_to_ipc(cmd)?,
         },
 
@@ -268,8 +301,9 @@ pub async fn handle_cache(cmd: CacheCmd) -> Result<()> {
         }
 
         CacheCmd::Clean => {
+            let cache_path = cache.root().to_owned();
             cache.clear().await?;
-            println!("Album art cache cleared.");
+            println!("Album art cache cleared at {}.", cache_path.display());
         }
     }
 
