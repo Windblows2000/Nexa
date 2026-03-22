@@ -15,7 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use anyhow::Result;
-use futures::StreamExt;
+use futures_util::StreamExt;
 use tracing::{debug, trace, warn};
 
 use std::os::unix::fs::PermissionsExt;

@@ -29,7 +29,7 @@ pub async fn run(state: DaemonState, mut demand_rx: watch::Receiver<usize>) {
                 if let Some(i) = &mut interval {
                     i.tick().await;
                 } else {
-                    futures::future::pending::<()>().await;
+                    std::future::pending::<()>().await;
                 }
             } => {
                 trace!("ticker: tick fired; rebroadcasting");

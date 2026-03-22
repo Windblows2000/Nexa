@@ -16,7 +16,7 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use futures::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt};
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
