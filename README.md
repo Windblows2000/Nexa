@@ -97,6 +97,17 @@ Artwork
 
 It's easy! Just follow the instructions below:
 
+### AUR
+
+```bash
+yay -S nexa-bin
+```
+or
+
+```bash
+paru -S nexa-bin
+```
+
 ### Pre-built Binary
 
 Grab the compiled binary from [here](https://github.com/Windblows2000/Nexa/releases).
@@ -105,21 +116,12 @@ Grab the compiled binary from [here](https://github.com/Windblows2000/Nexa/relea
 
 If you rather use Cargo or remain on the latest commits, 
 
-1- clone the repo and install Nexa.
+clone the repo and install Nexa.
 ```bash
 git clone https://github.com/Windblows2000/Nexa.git
 cd Nexa
 cargo install --path .
 ```
-
-2- The daemon is preferably started via the supplied systemd user service.
-```bash
-mkdir -p ~/.config/systemd/user/
-cp resources/systemd/nexad.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now nexad.service
-```
-The daemon runs per-user and automatically tracks media players as they appear or disappear.
 
 ## Contributing
 
