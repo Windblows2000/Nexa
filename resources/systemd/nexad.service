@@ -3,7 +3,7 @@ Description=Nexa Daemon
 After=network.target
 
 [Service]
-ExecStart=%h/.cargo/bin/nexad
+ExecStart=/usr/bin/nexad
 Restart=always
 RestartSec=5
 Type=simple
