@@ -22,6 +22,7 @@
 use crate::ipc::version::PROTOCOL_VERSION;
 use anyhow::Result;
 use directories::ProjectDirs;
+use postcard;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::net::UnixStream;
@@ -35,7 +36,13 @@ pub mod snapshot;
 mod transport;
 pub mod version;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Serialize)]
+struct EnvelopeRef<'a, T> {
+    version: u16,
+    payload: &'a T,
+}
+
+#[derive(Deserialize)]
 struct Envelope<T> {
     version: u16,
     payload: T,
@@ -45,19 +52,19 @@ pub async fn send(
     framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
     resp: Response,
 ) -> Result<()> {
-    transport::send(framed, resp).await
+    transport::send(framed, &resp).await
 }
 
 pub fn encode_request(req: &Request) -> anyhow::Result<Vec<u8>> {
-    let env = Envelope {
+    let env = EnvelopeRef {
         version: PROTOCOL_VERSION,
-        payload: req.clone(),
+        payload: req,
     };
-    Ok(bincode::serialize(&env)?)
+    Ok(postcard::to_stdvec(&env)?)
 }
 
 pub fn decode_request(bytes: &[u8]) -> anyhow::Result<Request> {
-    let env: Envelope<Request> = bincode::deserialize(bytes)?;
+    let env: Envelope<Request> = postcard::from_bytes(bytes)?;
     if env.version != PROTOCOL_VERSION {
         anyhow::bail!(
             "protocol mismatch: got {}, expected {}",
@@ -69,15 +76,15 @@ pub fn decode_request(bytes: &[u8]) -> anyhow::Result<Request> {
 }
 
 pub fn encode_response(resp: &Response) -> anyhow::Result<Vec<u8>> {
-    let env = Envelope {
+    let env = EnvelopeRef {
         version: PROTOCOL_VERSION,
-        payload: resp.clone(),
+        payload: resp,
     };
-    Ok(bincode::serialize(&env)?)
+    Ok(postcard::to_stdvec(&env)?)
 }
 
 pub fn decode_response(bytes: &[u8]) -> anyhow::Result<Response> {
-    let env: Envelope<Response> = bincode::deserialize(bytes)?;
+    let env: Envelope<Response> = postcard::from_bytes(bytes)?;
     if env.version != PROTOCOL_VERSION {
         anyhow::bail!(
             "protocol mismatch: got {}, expected {}",

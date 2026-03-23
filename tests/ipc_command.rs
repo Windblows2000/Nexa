@@ -4,8 +4,8 @@ use nexa::ipc::control::Command;
 fn command_roundtrip() {
     let cmd = Command::Play;
 
-    let bytes = bincode::serialize(&cmd).unwrap();
-    let decoded: Command = bincode::deserialize(&bytes).unwrap();
+    let bytes = postcard::to_stdvec(&cmd).expect("Failed to serialize Command");
+    let decoded: Command = postcard::from_bytes(&bytes).expect("Failed to deserialize Command");
 
     assert_eq!(cmd, decoded);
 }

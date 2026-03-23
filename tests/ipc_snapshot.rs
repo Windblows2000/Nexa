@@ -4,8 +4,8 @@ use nexa::ipc::snapshot::Snapshot;
 fn snapshot_roundtrip() {
     let snapshot = Snapshot::default();
 
-    let bytes = bincode::serialize(&snapshot).unwrap();
-    let decoded: Snapshot = bincode::deserialize(&bytes).unwrap();
+    let bytes = postcard::to_stdvec(&snapshot).expect("Failed to serialize Snapshot");
+    let decoded: Snapshot = postcard::from_bytes(&bytes).expect("Failed to deserialize Snapshot");
 
     assert_eq!(snapshot, decoded);
 }

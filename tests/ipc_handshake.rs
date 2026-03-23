@@ -9,8 +9,8 @@ fn handshake_roundtrip() {
         requested_features: vec![],
     };
 
-    let bytes = bincode::serialize(&hello).unwrap();
-    let decoded: Handshake = bincode::deserialize(&bytes).unwrap();
+    let bytes = postcard::to_stdvec(&hello).expect("Failed to serialize Handshake");
+    let decoded: Handshake = postcard::from_bytes(&bytes).expect("Failed to deserialize Handshake");
 
     assert_eq!(hello, decoded);
 }

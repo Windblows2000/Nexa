@@ -21,11 +21,12 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use crate::ipc::{Response, encode_response};
 
-/// Send a single IPC response frame over a length-delimited framed unix stream.
 pub async fn send(
     framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
-    resp: Response,
+    resp: &Response,
 ) -> Result<()> {
-    framed.send(encode_response(&resp)?.into()).await?;
+    let serialized = encode_response(resp)?;
+    framed.send(serialized.into()).await?;
+
     Ok(())
 }
