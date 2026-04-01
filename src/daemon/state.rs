@@ -88,7 +88,10 @@ impl DaemonState {
             return false;
         }
 
-        let inner = self.inner.blocking_read();
+        let Ok(inner) = self.inner.try_read() else {
+            return false;
+        };
+
         inner.primary_id.as_deref().is_some_and(|id| {
             inner
                 .players
