@@ -15,48 +15,39 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::generate;
 use futures_util::{SinkExt, StreamExt};
-use tokio::net::UnixStream;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
-
-use nexa::cli::{Cli, Cmd, OutputMode};
+use nexa::cli::{Cli, Cmd};
 use nexa::ipc::{Response, decode_response, encode_request, socket_path};
 use nexa::utils::init_logging;
+use tokio::net::UnixStream;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     init_logging(cli.verbose)?;
 
+    if let Cmd::Completions { shell } = &cli.cmd {
+        let mut cmd = Cli::command();
+        let name = cmd.get_name().to_string();
+        generate(*shell, &mut cmd, name, &mut std::io::stdout());
+        return Ok(());
+    }
+
     if let Cmd::Cache { cmd } = &cli.cmd {
         nexa::cli::handle_cache(cmd.clone()).await?;
         return Ok(());
     }
 
-    let req = nexa::cli::to_request(&cli)?.expect("non-cache commands must produce a request");
-
+    let req = nexa::cli::to_request(&cli)?.expect("non-local commands must produce a request");
     let stream = UnixStream::connect(socket_path())
         .await
         .context("daemon not running (start `nexad`)")?;
 
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
     framed.send(encode_request(&req)?.into()).await?;
-
-    let (output_mode, template) = match &cli.cmd {
-        Cmd::Metadata { out, format, .. } => (
-            out.resolve(OutputMode::Json, format.is_some()),
-            format.as_deref(),
-        ),
-        Cmd::Follow { out, format, .. } => (
-            out.resolve(OutputMode::Json, format.is_some()),
-            format.as_deref(),
-        ),
-        Cmd::Status { out, .. } | Cmd::List { out, .. } => {
-            (out.resolve(OutputMode::Json, false), None)
-        }
-        _ => (OutputMode::Text, None),
-    };
 
     let mut last_snapshot: Option<Box<nexa::ipc::PlayerSnapshotOut>> = None;
 
@@ -66,18 +57,29 @@ async fn main() -> Result<()> {
         match resp {
             Response::Metadata(snap) => {
                 last_snapshot = Some(snap.clone());
-                nexa::cli::print_metadata(&snap, template, output_mode)?;
+
+                match &cli.cmd {
+                    Cmd::Metadata { out, format, .. } | Cmd::Follow { out, format, .. } => {
+                        out.print(&snap, format.as_deref())?;
+                    }
+                    Cmd::Status { out, .. } | Cmd::List { out, .. } => {
+                        out.print(&snap, None)?;
+                    }
+                    _ => {}
+                }
             }
             Response::Position(seconds) => {
                 if let Some(mut snap) = last_snapshot.clone() {
                     snap.elapsed = seconds;
-                    nexa::cli::print_metadata(&snap, template, output_mode)?;
+
+                    if let Cmd::Follow { out, format, .. } = &cli.cmd {
+                        out.print(&snap, format.as_deref())?;
+                    }
+
                     last_snapshot = Some(snap);
                 }
             }
-            Response::Status(s) => {
-                println!("{s}");
-            }
+            Response::Status(s) => println!("{s}"),
             Response::List(players) => {
                 for p in players {
                     println!("{p}");
@@ -98,9 +100,7 @@ async fn main() -> Result<()> {
                 }
             }
             Response::Pong => {}
-            Response::Error(e) => {
-                anyhow::bail!(e);
-            }
+            Response::Error(e) => anyhow::bail!(e),
         }
 
         if !matches!(cli.cmd, Cmd::Follow { .. }) {

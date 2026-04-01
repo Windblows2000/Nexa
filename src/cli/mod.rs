@@ -14,43 +14,34 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use anyhow::Result;
-use clap::{Args, Parser, Subcommand, ValueEnum};
-
 use crate::cache::ImageCache;
 use crate::ipc::{Command, LoopState, PlayerSnapshotOut, Request, ShuffleState, Target};
+use anyhow::Result;
+use clap::{Args, Parser, Subcommand};
+use clap_complete::Shell;
 
 //
 // ===== Output =====
 //
 
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutputMode {
-    Text,
-    Json,
-    Toml,
-}
-
 #[derive(Args, Debug, Clone, Copy)]
 pub struct OutputArgs {
     /// Force TOML output
-    #[arg(long, conflicts_with = "output")]
+    #[arg(long)]
     pub toml: bool,
-
-    /// Explicit output mode
-    #[arg(long, value_enum)]
-    pub output: Option<OutputMode>,
 }
 
 impl OutputArgs {
-    pub fn resolve(&self, default: OutputMode, has_format: bool) -> OutputMode {
+    pub fn print(&self, snap: &PlayerSnapshotOut, format: Option<&str>) -> Result<()> {
         if self.toml {
-            OutputMode::Toml
-        } else if has_format {
-            OutputMode::Text
+            println!("{}", toml::to_string(snap)?);
+        } else if let Some(tpl) = format {
+            let out = crate::output::format_template(tpl, snap);
+            println!("{out}");
         } else {
-            self.output.unwrap_or(default)
+            println!("{}", serde_json::to_string_pretty(snap)?);
         }
+        Ok(())
     }
 }
 
@@ -82,6 +73,11 @@ pub enum Cmd {
 
         #[command(flatten)]
         out: OutputArgs,
+    },
+    /// The shell to generate completions for.
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
     },
 
     /// Show current playback status.
@@ -223,6 +219,8 @@ pub enum ControlCmd {
 
 pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
     Ok(Some(match &cli.cmd {
+        Cmd::Cache { .. } | Cmd::Completions { .. } => return Ok(None),
+
         Cmd::Ping => Request::Ping,
 
         Cmd::List { filter, .. } => Request::List {
@@ -252,14 +250,12 @@ pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
             out,
             ..
         } => {
-            let mode = out.resolve(OutputMode::Json, format.is_some());
-
-            let with_time = match mode {
-                OutputMode::Text => format
-                    .as_deref()
-                    .map(|f| f.contains("{elapsed}") || f.contains("{position}"))
-                    .unwrap_or(false),
-                OutputMode::Json | OutputMode::Toml => true,
+            let with_time = if out.toml {
+                true
+            } else if let Some(f) = format {
+                f.contains("{elapsed}") || f.contains("{position}")
+            } else {
+                true
             };
 
             Request::Follow {
@@ -280,8 +276,6 @@ pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
             },
             cmd: control_to_ipc(cmd)?,
         },
-
-        Cmd::Cache { .. } => return Ok(None),
     }))
 }
 
@@ -304,36 +298,6 @@ pub async fn handle_cache(cmd: CacheCmd) -> Result<()> {
             let cache_path = cache.root().to_owned();
             cache.clear().await?;
             println!("Album art cache cleared at {}.", cache_path.display());
-        }
-    }
-
-    Ok(())
-}
-
-//
-// ===== Output =====
-//
-
-pub fn print_metadata(
-    snap: &PlayerSnapshotOut,
-    format: Option<&str>,
-    mode: OutputMode,
-) -> Result<()> {
-    match mode {
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(snap)?);
-        }
-        OutputMode::Toml => {
-            println!("{}", toml::to_string(snap)?);
-        }
-        OutputMode::Text => {
-            let tpl = match format {
-                Some(tpl) => tpl,
-                None => anyhow::bail!("text output requires --format"),
-            };
-
-            let out = crate::output::format_template(tpl, snap);
-            println!("{out}");
         }
     }
 
