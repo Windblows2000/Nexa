@@ -19,7 +19,7 @@ use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use futures_util::{SinkExt, StreamExt};
 use nexa::cli::{Cli, Cmd};
-use nexa::ipc::{Response, decode_response, encode_request, socket_path};
+use nexa::ipc::{PlayerSnapshotOut, Response, decode_response, encode_request, socket_path};
 use nexa::utils::init_logging;
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -42,20 +42,22 @@ async fn main() -> Result<()> {
     }
 
     let req = nexa::cli::to_request(&cli)?.expect("non-local commands must produce a request");
+
     let stream = UnixStream::connect(socket_path())
         .await
         .context("daemon not running (start `nexad`)")?;
-
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
+
     framed.send(encode_request(&req)?.into()).await?;
 
-    let mut last_snapshot: Option<Box<nexa::ipc::PlayerSnapshotOut>> = None;
+    let mut last_snapshot: Option<PlayerSnapshotOut> = None;
 
     while let Some(bytes) = framed.next().await.transpose()? {
         let resp = decode_response(&bytes)?;
 
         match resp {
             Response::Metadata(snap) => {
+                let snap = *snap;
                 last_snapshot = Some(snap.clone());
 
                 match &cli.cmd {
@@ -71,36 +73,27 @@ async fn main() -> Result<()> {
             Response::Position(seconds) => {
                 if let Some(mut snap) = last_snapshot.clone() {
                     snap.elapsed = seconds;
-
                     if let Cmd::Follow { out, format, .. } = &cli.cmd {
                         out.print(&snap, format.as_deref())?;
                     }
-
                     last_snapshot = Some(snap);
                 }
             }
-            Response::Status(s) => println!("{s}"),
+            Response::Status(status) => println!("{status}"),
             Response::List(players) => {
-                for p in players {
-                    println!("{p}");
+                for player in players {
+                    println!("{player}");
                 }
             }
-            Response::Ok(msg) => {
-                if let Some(text) = msg {
-                    let is_numeric = text.parse::<f64>().is_ok();
-                    let is_timestamp = text.contains(':');
-
-                    if is_numeric || is_timestamp {
-                        println!("{text}");
-                    } else {
-                        println!("changed state to {text}");
-                    }
-                } else {
-                    println!("ok");
+            Response::Ok(msg) => match msg {
+                Some(text) if text.parse::<f64>().is_ok() || text.contains(':') => {
+                    println!("{text}");
                 }
-            }
+                Some(text) => println!("changed state to {text}"),
+                None => println!("ok"),
+            },
             Response::Pong => {}
-            Response::Error(e) => anyhow::bail!(e),
+            Response::Error(err) => anyhow::bail!(err),
         }
 
         if !matches!(cli.cmd, Cmd::Follow { .. }) {

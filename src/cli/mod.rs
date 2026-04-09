@@ -20,13 +20,9 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use clap_complete::Shell;
 
-//
-// ===== Output =====
-//
-
 #[derive(Args, Debug, Clone, Copy)]
 pub struct OutputArgs {
-    /// Force TOML output
+    /// Output the result in TOML format
     #[arg(long)]
     pub toml: bool,
 }
@@ -36,213 +32,191 @@ impl OutputArgs {
         if self.toml {
             println!("{}", toml::to_string(snap)?);
         } else if let Some(tpl) = format {
-            let out = crate::output::format_template(tpl, snap);
-            println!("{out}");
+            println!("{}", crate::output::format_template(tpl, snap));
         } else {
             println!("{}", serde_json::to_string_pretty(snap)?);
         }
+
         Ok(())
     }
 }
 
-//
-// ===== CLI =====
-//
-
+/// A Powerful, Rust-Based CLI Linux Tool for your Media Needs.
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 pub struct Cli {
-    /// Increase logging verbosity (-v, -vv, -vvv)
+    /// Increase logging verbosity (can be used multiple times)
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     pub verbose: u8,
-
     #[command(subcommand)]
     pub cmd: Cmd,
 }
 
-//
-// ===== Commands =====
-//
-
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
-    /// List detected MPRIS players.
+    /// List all currently available MPRIS players
     List {
+        /// Optional filter string to match against player names
         #[arg(long)]
         filter: Option<String>,
-
         #[command(flatten)]
         out: OutputArgs,
     },
-    /// The shell to generate completions for.
+    /// Generate shell completion scripts
     Completions {
+        /// The target shell for the completion script
         #[arg(value_enum)]
         shell: Shell,
     },
-
-    /// Show current playback status.
+    /// Get the current playback status of a player
     Status {
+        /// The player to query (e.g., "best", "all", or a specific ID)
         #[arg(long, default_value = "best", conflicts_with = "all")]
         player: String,
-
-        /// Target all available players
+        /// Query all available players
         #[arg(long, short)]
         all: bool,
-
         #[command(flatten)]
         out: OutputArgs,
     },
-
-    /// Print current metadata once.
+    /// Get full metadata for the current track
     Metadata {
+        /// The player to query
         #[arg(long, default_value = "best", conflicts_with = "all")]
         player: String,
-
-        /// Target all available players
+        /// Query all available players
         #[arg(long, short)]
         all: bool,
-
-        /// Template for text output
+        /// Custom output format string
         #[arg(long)]
         format: Option<String>,
-
-        #[command(flatten)]
-        out: OutputArgs,
+            #[command(flatten)]
+            out: OutputArgs,
     },
-
-    /// Stream metadata updates.
+    /// Continuously follow player updates and stream snapshots
     Follow {
+        /// The player to follow
         #[arg(long, default_value = "best", conflicts_with = "all")]
         player: String,
-
-        /// Target all available players
+        /// Follow all available players
         #[arg(long, short)]
         all: bool,
-
-        /// Template for text output
+        /// Custom output format string
         #[arg(long)]
         format: Option<String>,
-
-        #[command(flatten)]
-        out: OutputArgs,
+            #[command(flatten)]
+            out: OutputArgs,
     },
-
-    /// Send a playback control command.
+    /// Send a control command (play, pause, etc.) to a player
     Command {
+        /// The target player for the command
         #[arg(long, default_value = "best", conflicts_with = "all")]
         player: String,
-
-        /// Target all available players
+        /// Send the command to all available players
         #[arg(long, short)]
         all: bool,
-
         #[command(subcommand)]
         cmd: ControlCmd,
     },
-
-    /// Inspect or manage the album art cache.
+    /// Manage the local album art cache
     Cache {
         #[command(subcommand)]
         cmd: CacheCmd,
     },
-
-    /// Ping the daemon.
+    /// Ping the nexa daemon to check connectivity
     Ping,
 }
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum CacheCmd {
-    /// Show cache size and location.
+    /// Show cache statistics (size and count)
     Info,
-
-    /// Remove all cached album art.
+    /// Clear all cached album art
     Clean,
 }
 
-//
-// ===== Control Commands =====
-//
-
 #[derive(Subcommand, Debug, Clone)]
 pub enum ControlCmd {
+    /// Resume playback
     Play,
+    /// Pause playback
     Pause,
+    /// Toggle between play and pause
     PlayPause,
+    /// Stop playback
     Stop,
+    /// Skip to the next track
     Next,
+    /// Skip to the previous track
     Previous,
-
+    /// Open a specific URI in the player
     Open {
+        /// The URI (e.g., a URL or file path) to open
         uri: String,
     },
-
+    /// Adjust or set the player volume
     Volume {
+        /// Set absolute volume (0.0 to 1.0)
         #[arg(long)]
         set: Option<f64>,
+        /// Increase volume by an amount
         #[arg(long)]
         up: Option<f64>,
+        /// Decrease volume by an amount
         #[arg(long)]
         down: Option<f64>,
     },
-
+    /// Adjust or set the playback position
     Position {
+        /// Set absolute position in microseconds
         #[arg(long)]
         set: Option<u64>,
+        /// Seek forward by microseconds
         #[arg(long)]
         forward: Option<u64>,
-        #[arg(long)]
-        backward: Option<u64>,
+            /// Seek backward by microseconds
+            #[arg(long)]
+            backward: Option<u64>,
     },
-
+    /// Manage shuffle state
     Shuffle {
+        /// Enable shuffle
         #[arg(long)]
         on: bool,
+        /// Disable shuffle
         #[arg(long)]
         off: bool,
+        /// Toggle shuffle state
         #[arg(long)]
         toggle: bool,
     },
-
+    /// Manage loop/repeat state
     Loop {
+        /// Disable looping
         #[arg(long)]
         none: bool,
+        /// Loop the current track
         #[arg(long)]
         track: bool,
+        /// Loop the current playlist
         #[arg(long)]
         playlist: bool,
     },
 }
 
-//
-// ===== Requests =====
-//
-
 pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
-    Ok(Some(match &cli.cmd {
+    let request = match &cli.cmd {
         Cmd::Cache { .. } | Cmd::Completions { .. } => return Ok(None),
-
         Cmd::Ping => Request::Ping,
-
         Cmd::List { filter, .. } => Request::List {
             filter: filter.clone(),
         },
-
         Cmd::Status { player, all, .. } => Request::Status {
-            target: if *all {
-                Target::All { filter: None }
-            } else {
-                parse_selector(player)?
-            },
+            target: target_from_args(player, *all)?,
         },
-
         Cmd::Metadata { player, all, .. } => Request::Metadata {
-            target: if *all {
-                Target::All { filter: None }
-            } else {
-                parse_selector(player)?
-            },
+            target: target_from_args(player, *all)?,
         },
-
         Cmd::Follow {
             player,
             all,
@@ -250,38 +224,24 @@ pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
             out,
             ..
         } => {
-            let with_time = if out.toml {
-                true
-            } else if let Some(f) = format {
-                f.contains("{elapsed}") || f.contains("{position}")
-            } else {
-                true
-            };
+            let with_time = out.toml
+                || format
+                    .as_deref()
+                    .is_none_or(|tpl| tpl.contains("{elapsed}") || tpl.contains("{position}"));
 
             Request::Follow {
-                target: if *all {
-                    Target::All { filter: None }
-                } else {
-                    parse_selector(player)?
-                },
+                target: target_from_args(player, *all)?,
                 with_time,
             }
         }
-
         Cmd::Command { player, all, cmd } => Request::Command {
-            target: if *all {
-                Target::All { filter: None }
-            } else {
-                parse_selector(player)?
-            },
+            target: target_from_args(player, *all)?,
             cmd: control_to_ipc(cmd)?,
         },
-    }))
-}
+    };
 
-//
-// ===== Cache commands (client-side) =====
-//
+    Ok(Some(request))
+}
 
 pub async fn handle_cache(cmd: CacheCmd) -> Result<()> {
     let cache = ImageCache::new().await?;
@@ -293,7 +253,6 @@ pub async fn handle_cache(cmd: CacheCmd) -> Result<()> {
             println!("Images cached: {count}");
             println!("Cache size: {size} bytes");
         }
-
         CacheCmd::Clean => {
             let cache_path = cache.root().to_owned();
             cache.clear().await?;
@@ -304,9 +263,13 @@ pub async fn handle_cache(cmd: CacheCmd) -> Result<()> {
     Ok(())
 }
 
-//
-// ===== Helpers =====
-//
+fn target_from_args(player: &str, all: bool) -> Result<Target> {
+    if all {
+        Ok(Target::All { filter: None })
+    } else {
+        parse_selector(player)
+    }
+}
 
 fn parse_selector(s: &str) -> Result<Target> {
     let (kind, filter) = match s.split_once(':') {
@@ -323,6 +286,14 @@ fn parse_selector(s: &str) -> Result<Target> {
     })
 }
 
+fn exactly_one_or_none(options: [bool; 3], err: &str) -> Result<()> {
+    let selected = options.into_iter().filter(|selected| *selected).count();
+    if selected > 1 {
+        anyhow::bail!("{}", err);
+    }
+    Ok(())
+}
+
 fn control_to_ipc(cmd: &ControlCmd) -> Result<Command> {
     Ok(match cmd {
         ControlCmd::Play => Command::Play,
@@ -331,25 +302,35 @@ fn control_to_ipc(cmd: &ControlCmd) -> Result<Command> {
         ControlCmd::Stop => Command::Stop,
         ControlCmd::Next => Command::Next,
         ControlCmd::Previous => Command::Previous,
-
         ControlCmd::Open { uri } => Command::Open { uri: uri.clone() },
+        ControlCmd::Volume { set, up, down } => {
+            exactly_one_or_none(
+                [set.is_some(), up.is_some(), down.is_some()],
+                "choose at most one of --set/--up/--down",
+            )?;
 
-        ControlCmd::Volume { set, up, down } => Command::Volume {
-            level: *set,
-            up: *up,
-            down: *down,
-        },
-
+            Command::Volume {
+                level: *set,
+                up: *up,
+                down: *down,
+            }
+        }
         ControlCmd::Position {
             set,
             forward,
             backward,
-        } => Command::Position {
-            set_to: *set,
-            forward: *forward,
-            backward: *backward,
-        },
+        } => {
+            exactly_one_or_none(
+                [set.is_some(), forward.is_some(), backward.is_some()],
+                "choose at most one of --set/--forward/--backward",
+            )?;
 
+            Command::Position {
+                set_to: *set,
+                forward: *forward,
+                backward: *backward,
+            }
+        }
         ControlCmd::Shuffle { on, off, toggle } => {
             let state = match (*on, *off, *toggle) {
                 (true, false, false) => Some(ShuffleState::On),
@@ -358,9 +339,9 @@ fn control_to_ipc(cmd: &ControlCmd) -> Result<Command> {
                 (false, false, false) => None,
                 _ => anyhow::bail!("choose at most one of --on/--off/--toggle"),
             };
+
             Command::Shuffle { state }
         }
-
         ControlCmd::Loop {
             none,
             track,
@@ -373,6 +354,7 @@ fn control_to_ipc(cmd: &ControlCmd) -> Result<Command> {
                 (false, false, false) => None,
                 _ => anyhow::bail!("choose at most one of --none/--track/--playlist"),
             };
+
             Command::Loop { state }
         }
     })
