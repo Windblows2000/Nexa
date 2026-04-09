@@ -10,7 +10,7 @@ provides=('nexa' 'nexad')
 conflicts=('nexa' 'nexa-git')
 install=nexa.install
 source=("https://github.com/Windblows2000/Nexa/releases/download/v$pkgver/nexa-v$pkgver-x86_64-linux.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('e3b87ad349d2284e54813890d924905b582605498960383767851b5196f043eb')
 
 package() {
   cd "$srcdir/nexa-v$pkgver-x86_64-linux"
