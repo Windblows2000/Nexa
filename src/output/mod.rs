@@ -19,7 +19,6 @@ use std::path::PathBuf;
 use tracing::{debug, trace};
 use url::Url;
 
-/// Format seconds as M:SS or H:MM:SS if >= 1 hour.
 pub fn format_duration(secs: u64) -> String {
     let hours = secs / 3600;
     let minutes = (secs % 3600) / 60;
@@ -37,30 +36,26 @@ fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     url.to_file_path().ok()
 }
 
-/// Resolve album art into two clear outputs:
-/// - art_url  → raw MPRIS value (unchanged)
-/// - art_path → absolute filesystem path (cached or local)
 fn resolve_art_outputs(s: &PlayerSnapshotOut) -> (String, String) {
     let art_url = s.art_url.clone().unwrap_or_default();
 
-    if let Some(p) = &s.art_path {
-        let path = p.display().to_string();
+    if let Some(path) = &s.art_path {
+        let path = path.display().to_string();
         trace!(path = %path, "Using resolved art_path from daemon");
         return (art_url, path);
     }
 
-    // Safety fallback: if daemon didn't provide art_path but art_url is file://, derive it.
-    if let Some(u) = s.art_url.as_deref()
-        && u.starts_with("file://")
+    if let Some(uri) = s.art_url.as_deref()
+        && uri.starts_with("file://")
     {
-        match file_uri_to_path(u) {
-            Some(p) => {
-                let path = p.display().to_string();
+        match file_uri_to_path(uri) {
+            Some(path) => {
+                let path = path.display().to_string();
                 trace!(path = %path, "Derived art_path from file:// art_url (fallback)");
                 return (art_url, path);
             }
             None => {
-                debug!(art_url = %u, "Failed to convert file:// URI to path (fallback)");
+                debug!(art_url = %uri, "Failed to convert file:// URI to path (fallback)");
             }
         }
     }
@@ -78,35 +73,62 @@ pub fn format_template(tpl: &str, s: &PlayerSnapshotOut) -> String {
 
     let length = s.length.map(format_duration).unwrap_or_default();
     let elapsed = format_duration(s.elapsed);
-
-    let rate_s = s.rate.map(|v| v.to_string()).unwrap_or_default();
-    let volume_s = s.volume.map(|v| v.to_string()).unwrap_or_default();
-
-    let shuffle_s = match s.shuffle {
+    let rate = s.rate.map(|v| v.to_string()).unwrap_or_default();
+    let volume = s.volume.map(|v| v.to_string()).unwrap_or_default();
+    let shuffle = match s.shuffle {
         Some(true) => "on",
         Some(false) => "off",
         None => "",
     };
-
-    let loop_s = s.loop_status.as_deref().unwrap_or("");
-
+    let loop_status = s.loop_status.as_deref().unwrap_or("");
     let (art_url, art_path) = resolve_art_outputs(s);
 
-    let out = tpl
-        .replace("{title}", s.title.as_deref().unwrap_or(""))
-        .replace("{artist}", s.artist.as_deref().unwrap_or(""))
-        .replace("{album}", s.album.as_deref().unwrap_or(""))
-        .replace("{status}", &s.status)
-        .replace("{player}", &s.player_id)
-        .replace("{elapsed}", &elapsed)
-        .replace("{length}", &length)
-        .replace("{rate}", &rate_s)
-        .replace("{volume}", &volume_s)
-        .replace("{shuffle}", shuffle_s)
-        .replace("{loop}", loop_s)
-        .replace("{art_url}", &art_url)
-        .replace("{art_path}", &art_path);
+    let replacement = |key: &str| -> Option<&str> {
+        match key {
+            "title" => Some(s.title.as_deref().unwrap_or("")),
+            "artist" => Some(s.artist.as_deref().unwrap_or("")),
+            "album" => Some(s.album.as_deref().unwrap_or("")),
+            "status" => Some(&s.status),
+            "player" => Some(&s.player_id),
+            "elapsed" | "position" => Some(&elapsed),
+            "length" => Some(&length),
+            "rate" => Some(&rate),
+            "volume" => Some(&volume),
+            "shuffle" => Some(shuffle),
+            "loop" => Some(loop_status),
+            "art_url" => Some(&art_url),
+            "art_path" => Some(&art_path),
+            _ => None,
+        }
+    };
 
+    let mut out = String::with_capacity(tpl.len() + 64);
+    let mut rest = tpl;
+
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        rest = &rest[open + 1..];
+
+        let Some(close) = rest.find('}') else {
+            out.push('{');
+            out.push_str(rest);
+            trace!(output = %out, "Formatted template output");
+            return out;
+        };
+
+        let key = &rest[..close];
+        if let Some(value) = replacement(key) {
+            out.push_str(value);
+        } else {
+            out.push('{');
+            out.push_str(key);
+            out.push('}');
+        }
+
+        rest = &rest[close + 1..];
+    }
+
+    out.push_str(rest);
     trace!(output = %out, "Formatted template output");
     out
 }
