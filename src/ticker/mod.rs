@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use crate::daemon::state::DaemonState;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 use tokio::time::{Duration, Instant, Interval, interval_at};
 use tracing::{debug, trace};
-
-use crate::daemon::state::DaemonState;
 
 pub async fn run(state: DaemonState, mut demand_rx: watch::Receiver<usize>) {
     let mut interval: Option<Interval> = None;
@@ -26,16 +26,17 @@ pub async fn run(state: DaemonState, mut demand_rx: watch::Receiver<usize>) {
     loop {
         tokio::select! {
             _ = async {
-                if let Some(i) = &mut interval {
-                    i.tick().await;
+                if let Some(interval) = &mut interval {
+                    interval.tick().await;
                 } else {
                     std::future::pending::<()>().await;
                 }
             } => {
-                trace!("ticker: tick fired; rebroadcasting");
-                state.rebroadcast().await;
+                if state.should_tick() {
+                    trace!("ticker: tick fired; rebroadcasting");
+                    state.rebroadcast().await;
+                }
             }
-
             Ok(_) = demand_rx.changed() => {
                 let demand = *demand_rx.borrow();
                 trace!(demand, "ticker: demand changed");
@@ -57,9 +58,16 @@ pub async fn run(state: DaemonState, mut demand_rx: watch::Receiver<usize>) {
 }
 
 fn second_aligned_interval() -> Interval {
-    let now = Instant::now();
-    let next = now + Duration::from_secs(1)
-        - Duration::from_nanos((now.elapsed().as_nanos() % 1_000_000_000) as u64);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
 
-    interval_at(next, Duration::from_secs(1))
+    let nanos = now.subsec_nanos() as u64;
+    let delay = if nanos == 0 {
+        Duration::from_secs(1)
+    } else {
+        Duration::from_nanos(1_000_000_000 - nanos)
+    };
+
+    interval_at(Instant::now() + delay, Duration::from_secs(1))
 }

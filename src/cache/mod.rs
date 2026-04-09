@@ -22,36 +22,28 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
 use tracing::{info, instrument, warn};
+use url::Url;
 use uuid::Uuid;
 
 const MAX_CACHE_BYTES: u64 = 1_000_000_000;
 const MAX_OBJECT_BYTES: u64 = 10 * 1024 * 1024;
 const CLEANUP_TRIGGER_BYTES: u64 = MAX_CACHE_BYTES / 100;
+const SNIFF_BYTES: usize = 512;
 
 #[derive(Clone)]
 pub struct ImageCache {
     root: PathBuf,
     client: reqwest::Client,
-    in_flight: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    in_flight: Arc<Mutex<HashMap<String, InFlightEntry>>>,
 }
 
-struct InFlightGuard {
-    url: String,
-    map: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
-}
-
-impl Drop for InFlightGuard {
-    fn drop(&mut self) {
-        let map = self.map.clone();
-        let url = self.url.clone();
-        tokio::spawn(async move {
-            map.lock().await.remove(&url);
-        });
-    }
+struct InFlightEntry {
+    lock: Arc<Mutex<()>>,
+    users: usize,
 }
 
 impl ImageCache {
@@ -76,21 +68,23 @@ impl ImageCache {
     }
 
     pub async fn stats(&self) -> Result<(usize, u64)> {
-        let mut count = 0;
-        let mut size = 0;
+        let mut count = 0usize;
+        let mut size = 0u64;
+
         let mut rd = match fs::read_dir(&self.root).await {
             Ok(rd) => rd,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
             Err(e) => return Err(e.into()),
         };
 
-        while let Some(e) = rd.next_entry().await? {
-            let meta = e.metadata().await?;
+        while let Some(entry) = rd.next_entry().await? {
+            let meta = entry.metadata().await?;
             if meta.is_file() {
                 count += 1;
                 size += meta.len();
             }
         }
+
         Ok((count, size))
     }
 
@@ -102,12 +96,14 @@ impl ImageCache {
 
     pub async fn cached_path(&self, url: &str) -> Option<PathBuf> {
         let stem = self.stem_for_url(url);
+
         for ext in ["jpg", "jpeg", "png", "webp", "gif", "bin"] {
-            let path = self.root.join(format!("{}.{}", stem, ext));
+            let path = self.root.join(format!("{stem}.{ext}"));
             if self.is_valid_file(&path).await {
                 return Some(path);
             }
         }
+
         None
     }
 
@@ -117,28 +113,51 @@ impl ImageCache {
             return Ok(path);
         }
 
-        let (lock, guard) = {
-            let mut map = self.in_flight.lock().await;
-            let lock = map
-                .entry(url.to_string())
-                .or_insert_with(|| Arc::new(Mutex::new(())))
-                .clone();
-            let guard = InFlightGuard {
-                url: url.to_string(),
-                map: self.in_flight.clone(),
-            };
-            (lock, guard)
+        let lock = self.acquire_in_flight(url).await;
+
+        let result = async {
+            let _download_guard = lock.lock().await;
+
+            if let Some(path) = self.cached_path(url).await {
+                return Ok(path);
+            }
+
+            let stem = self.stem_for_url(url);
+            self.download_to_cache(url, &stem).await
+        }
+        .await;
+
+        self.release_in_flight(url, &lock).await;
+        result
+    }
+
+    async fn acquire_in_flight(&self, url: &str) -> Arc<Mutex<()>> {
+        let mut map = self.in_flight.lock().await;
+        let entry = map.entry(url.to_owned()).or_insert_with(|| InFlightEntry {
+            lock: Arc::new(Mutex::new(())),
+            users: 0,
+        });
+        entry.users += 1;
+        entry.lock.clone()
+    }
+
+    async fn release_in_flight(&self, url: &str, lock: &Arc<Mutex<()>>) {
+        let mut map = self.in_flight.lock().await;
+
+        let should_remove = if let Some(entry) = map.get_mut(url) {
+            if Arc::ptr_eq(&entry.lock, lock) {
+                entry.users = entry.users.saturating_sub(1);
+                entry.users == 0
+            } else {
+                false
+            }
+        } else {
+            false
         };
 
-        let _lock_guard = lock.lock().await;
-        let _cleanup = guard;
-
-        if let Some(path) = self.cached_path(url).await {
-            return Ok(path);
+        if should_remove {
+            map.remove(url);
         }
-
-        let stem = self.stem_for_url(url);
-        self.download_to_cache(url, &stem).await
     }
 
     async fn is_valid_file(&self, path: &Path) -> bool {
@@ -149,45 +168,65 @@ impl ImageCache {
     }
 
     async fn download_to_cache(&self, url: &str, stem: &str) -> Result<PathBuf> {
-        let resp = self.client.get(url).send().await?.error_for_status()?;
+        let parsed = Url::parse(url).context("invalid art URL")?;
+        match parsed.scheme() {
+            "http" | "https" => {}
+            other => anyhow::bail!("unsupported art URL scheme: {other}"),
+        }
 
+        let resp = self.client.get(parsed).send().await?.error_for_status()?;
         if let Some(len) = resp.content_length()
             && len > MAX_OBJECT_BYTES
         {
             anyhow::bail!("object too large");
         }
 
-        let tmp_path = self.root.join(format!("{}.tmp-{}", stem, Uuid::new_v4()));
+        let tmp_path = self.root.join(format!("{stem}.tmp-{}", Uuid::new_v4()));
         let mut file = fs::File::create(&tmp_path).await?;
-        let mut downloaded: u64 = 0;
+        let mut downloaded = 0u64;
+        let mut sniff_buf = Vec::with_capacity(SNIFF_BYTES);
         let mut stream = resp.bytes_stream();
-        let mut first_chunk = None;
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            if first_chunk.is_none() {
-                first_chunk = Some(chunk.clone());
-            }
-            downloaded += chunk.len() as u64;
+        let write_result: Result<()> = async {
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                downloaded += chunk.len() as u64;
 
-            if downloaded > MAX_OBJECT_BYTES {
-                let _ = fs::remove_file(&tmp_path).await;
-                anyhow::bail!("exceeded max size");
+                if downloaded > MAX_OBJECT_BYTES {
+                    anyhow::bail!("exceeded max size");
+                }
+
+                if sniff_buf.len() < SNIFF_BYTES {
+                    let remaining = SNIFF_BYTES - sniff_buf.len();
+                    let take = remaining.min(chunk.len());
+                    sniff_buf.extend_from_slice(&chunk[..take]);
+                }
+
+                file.write_all(&chunk).await?;
             }
-            file.write_all(&chunk).await?;
+
+            file.flush().await?;
+            Ok(())
+        }
+        .await;
+
+        if let Err(err) = write_result {
+            let _ = fs::remove_file(&tmp_path).await;
+            return Err(err);
         }
 
-        file.flush().await?;
         drop(file);
 
-        let ext = first_chunk
-            .as_ref()
-            .and_then(|b| infer::get(b))
-            .map(|k| k.extension())
+        let ext = infer::get(&sniff_buf)
+            .map(|kind| kind.extension())
             .unwrap_or("bin");
+        let final_path = self.root.join(format!("{stem}.{ext}"));
 
-        let final_path = self.root.join(format!("{}.{}", stem, ext));
-        fs::rename(&tmp_path, &final_path).await?;
+        if let Err(err) = fs::rename(&tmp_path, &final_path).await {
+            let _ = fs::remove_file(&tmp_path).await;
+            return Err(err.into());
+        }
+
         info!(url = %url, path = ?final_path, "cached image");
 
         if downloaded >= CLEANUP_TRIGGER_BYTES {
@@ -203,26 +242,27 @@ impl ImageCache {
     }
 
     fn stem_for_url(&self, url: &str) -> String {
-        let mut h = Sha256::new();
-        h.update(url.as_bytes());
-        hex::encode(h.finalize())
+        let mut hasher = Sha256::new();
+        hasher.update(url.as_bytes());
+        hex::encode(hasher.finalize())
     }
 }
 
 async fn enforce_size_limit(root: &Path) -> Result<()> {
-    let mut entries = Vec::new();
-    let mut total_size: u64 = 0;
+    let mut entries: Vec<(PathBuf, u64, Option<SystemTime>)> = Vec::new();
+    let mut total_size = 0u64;
+
     let mut rd = match fs::read_dir(root).await {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e.into()),
     };
 
-    while let Some(e) = rd.next_entry().await? {
-        let meta = e.metadata().await?;
+    while let Some(entry) = rd.next_entry().await? {
+        let meta = entry.metadata().await?;
         if meta.is_file() {
             total_size += meta.len();
-            entries.push((e.path(), meta.len()));
+            entries.push((entry.path(), meta.len(), meta.modified().ok()));
         }
     }
 
@@ -230,13 +270,17 @@ async fn enforce_size_limit(root: &Path) -> Result<()> {
         return Ok(());
     }
 
-    for (path, size) in entries {
+    entries.sort_by_key(|(_, _, modified)| *modified);
+
+    for (path, size, _) in entries {
         if fs::remove_file(&path).await.is_ok() {
             total_size = total_size.saturating_sub(size);
         }
+
         if total_size <= MAX_CACHE_BYTES {
             break;
         }
     }
+
     Ok(())
 }
