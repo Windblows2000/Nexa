@@ -62,29 +62,25 @@ async fn handle_request_inner(
     trace!(?req, "Handling request");
 
     match req {
-        Request::Metadata { target, .. } => {
+        Request::Metadata { target } => {
             let id = resolve_one_player(&state, &conn, target).await?;
             let snap = get_snapshot_cached(&state, &conn, &id).await?;
             let out = snapshot_out(snap, cache).await?;
             Ok(Response::Metadata(Box::new(out)))
         }
-
         Request::Status { target } => {
             let id = resolve_one_player(&state, &conn, target).await?;
             let snap = get_snapshot_cached(&state, &conn, &id).await?;
             Ok(Response::Status(snap.status.as_str().to_string()))
         }
-
         Request::List { filter } => {
             let ids = mpris::list_players(&conn).await?;
-            let out = apply_filter(ids, filter);
-            Ok(Response::List(out))
+            Ok(Response::List(apply_filter(ids, filter.as_deref())))
         }
-
         Request::Command { target, cmd } => {
             let msg = match target {
                 Target::All { filter } => {
-                    let ids = apply_filter(mpris::list_players(&conn).await?, filter);
+                    let ids = apply_filter(mpris::list_players(&conn).await?, filter.as_deref());
                     for id in ids {
                         execute_command(&state, conn.clone(), &id, &cmd)
                             .await
@@ -97,19 +93,33 @@ async fn handle_request_inner(
                     execute_command(&state, conn.clone(), &id, &cmd).await?
                 }
             };
+
             Ok(Response::Ok(msg))
         }
-
         Request::Ping => Ok(Response::Pong),
         Request::Follow { .. } => Ok(Response::Error("Follow is handled as a stream".into())),
     }
 }
 
-fn apply_filter(mut ids: Vec<String>, filter: Option<String>) -> Vec<String> {
-    let Some(f) = filter else { return ids };
-    let f = f.to_lowercase();
-    ids.retain(|id| id.to_lowercase().contains(&f));
-    ids
+fn apply_filter(ids: Vec<String>, filter: Option<&str>) -> Vec<String> {
+    let Some(filter) = filter else {
+        return ids;
+    };
+
+    let filter = filter.to_ascii_lowercase();
+    ids.into_iter()
+        .filter(|id| id.to_ascii_lowercase().contains(&filter))
+        .collect()
+}
+
+fn player_matches_filter(player_id: &str, filter: Option<&str>) -> bool {
+    filter
+        .map(|f| {
+            player_id
+                .to_ascii_lowercase()
+                .contains(&f.to_ascii_lowercase())
+        })
+        .unwrap_or(true)
 }
 
 async fn resolve_one_player(
@@ -120,24 +130,16 @@ async fn resolve_one_player(
     match target {
         Target::Player { id } => Ok(id),
         Target::Best { filter } => {
-            if let Some(snap) = state.primary_snapshot().await {
-                if let Some(f) = filter.as_deref() {
-                    if snap.player_id.to_lowercase().contains(&f.to_lowercase()) {
-                        return Ok(snap.player_id);
-                    }
-                } else {
-                    return Ok(snap.player_id);
-                }
+            if let Some(snap) = state.primary_snapshot().await
+                && player_matches_filter(&snap.player_id, filter.as_deref())
+            {
+                return Ok(snap.player_id);
             }
 
-            let mut ids = mpris::list_players(conn).await?;
-            if let Some(f) = filter {
-                let f = f.to_lowercase();
-                ids.retain(|id| id.to_lowercase().contains(&f));
-            }
-
-            ids.into_iter()
-                .next()
+            mpris::list_players(conn)
+                .await?
+                .into_iter()
+                .find(|id| player_matches_filter(id, filter.as_deref()))
                 .ok_or_else(|| anyhow!("No matching players found"))
         }
         Target::All { .. } => Err(anyhow!("Target::All invalid for single-player operations")),
@@ -149,13 +151,12 @@ async fn get_snapshot_cached(
     conn: &mpris::SharedConnection,
     player_id: &str,
 ) -> Result<mpris::PlayerStateSnapshot> {
-    if let Some(s) = state.snapshot_for_player(player_id).await {
-        return Ok(s);
+    if let Some(snapshot) = state.snapshot_for_player(player_id).await {
+        return Ok(snapshot);
     }
 
     let proxy = mpris::player_from_bus(conn, player_id).await?;
     let snap = mpris::snapshot_from_player(&proxy).await?;
-
     state
         .upsert_snapshot_and_broadcast(
             snap.clone(),
@@ -199,75 +200,75 @@ async fn execute_command(
             player.stop().await?;
             Ok(None)
         }
-
         Command::Open { uri } => {
             let proxy = mpris::root_proxy(&conn, player_id).await?;
             proxy.open_uri(uri).await?;
             Ok(None)
         }
-
         Command::Volume { level, up, down } => {
-            let cur = player.volume().await.unwrap_or(0.0);
+            let cur = player
+                .volume()
+                .await
+                .context("failed to query current volume")?;
 
             if level.is_none() && up.is_none() && down.is_none() {
-                return Ok(Some(format!("{:.2}", cur)));
+                return Ok(Some(format!("{cur:.2}")));
             }
 
             let new = compute_volume(cur, *level, *up, *down).clamp(0.0, 1.0);
             player.set_volume(new).await?;
             Ok(None)
         }
-
         Command::Position {
             set_to,
             forward,
             backward,
         } => {
             if set_to.is_none() && forward.is_none() && backward.is_none() {
-                let pos_micros = player.position().await.unwrap_or(0);
-                let total_secs = (pos_micros as f64 / 1_000_000.0).round() as u64;
+                let pos_micros = player
+                    .position()
+                    .await
+                    .context("failed to query current position")?;
+                let total_secs = (pos_micros.max(0) as f64 / 1_000_000.0).round() as u64;
                 return Ok(Some(format_duration(total_secs)));
             }
 
-            if let Some(f) = forward {
-                player.seek((*f as f64 * 1_000_000.0) as i64).await?;
-            } else if let Some(b) = backward {
-                player.seek((*b as f64 * -1_000_000.0) as i64).await?;
-            } else if let Some(s) = set_to {
-                let tid_str = if let Some(cached) = state.snapshot_for_player(player_id).await {
+            if let Some(seconds) = forward {
+                player.seek((*seconds as i64) * 1_000_000).await?;
+            } else if let Some(seconds) = backward {
+                player.seek(-(*seconds as i64) * 1_000_000).await?;
+            } else if let Some(seconds) = set_to {
+                let track_id = if let Some(cached) = state.snapshot_for_player(player_id).await {
                     cached.metadata.track_id
                 } else {
                     let meta = player.metadata().await?;
-                    meta.get("mpris:trackid").and_then(|v| {
-                        let op: zbus::zvariant::ObjectPath = v.try_into().ok()?;
-                        Some(op.to_string())
+                    meta.get("mpris:trackid").and_then(|value| {
+                        let path: zbus::zvariant::ObjectPath<'_> = value.try_into().ok()?;
+                        Some(path.to_string())
                     })
                 }
                 .ok_or_else(|| anyhow!("Player has no TrackID"))?;
 
-                let tid = zbus::zvariant::ObjectPath::try_from(tid_str)?;
+                let track_id = zbus::zvariant::ObjectPath::try_from(track_id)?;
                 player
-                    .set_position(tid, (*s as f64 * 1_000_000.0) as i64)
+                    .set_position(track_id, (*seconds as i64) * 1_000_000)
                     .await?;
             }
+
             Ok(None)
         }
-
         Command::Shuffle { state } => {
             let cur = player.shuffle().await.unwrap_or(false);
-            let next_bool = compute_shuffle(cur, state.unwrap_or(ShuffleState::Toggle));
-            player.set_shuffle(next_bool).await?;
-            let msg = if next_bool { "On" } else { "Off" };
-            Ok(Some(msg.to_string()))
+            let next = compute_shuffle(cur, state.unwrap_or(ShuffleState::Toggle));
+            player.set_shuffle(next).await?;
+            Ok(Some(if next { "On" } else { "Off" }.to_string()))
         }
-
         Command::Loop { state } => {
-            let cur_str = player
+            let cur = player
                 .loop_status()
                 .await
                 .unwrap_or_else(|_| "None".to_string());
-
-            let next = compute_loop(&cur_str, state.unwrap_or(LoopState::Toggle));
+            let next = compute_loop(&cur, state.unwrap_or(LoopState::Toggle));
             player.set_loop_status(next.to_string()).await?;
             Ok(Some(next.to_string()))
         }
@@ -309,16 +310,18 @@ pub async fn snapshot_out(
     cache: &ImageCache,
 ) -> Result<PlayerSnapshotOut> {
     let art_url = s.metadata.art_url.clone();
-    let art_path = match art_url.as_deref() {
-        Some(u) if u.starts_with("file://") => Url::parse(u)
+
+    let art_path = match art_url.as_deref().and_then(|u| Url::parse(u).ok()) {
+        Some(url) if url.scheme() == "file" => url
+            .to_file_path()
             .ok()
-            .and_then(|url| url.to_file_path().ok())
-            .or_else(|| Some(std::path::PathBuf::from(u.trim_start_matches("file://")))),
-        Some(u) if u.starts_with("http") => {
-            if let Some(p) = cache.cached_path(u).await {
-                Some(p)
+            .or_else(|| Some(std::path::PathBuf::from(url.path()))),
+        Some(url) if matches!(url.scheme(), "http" | "https") => {
+            let url = url.to_string();
+            if let Some(path) = cache.cached_path(&url).await {
+                Some(path)
             } else {
-                cache.ensure_cached(u).await.ok()
+                cache.ensure_cached(&url).await.ok()
             }
         }
         _ => None,

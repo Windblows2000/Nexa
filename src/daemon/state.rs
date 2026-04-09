@@ -14,14 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
-
-use tokio::sync::{RwLock, broadcast};
-
 use crate::{
     mpris::{PlayerStateSnapshot, PlayerStatus, TrackMetadata},
     player::{ActivityPriority, LivePlayer},
 };
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::sync::{RwLock, broadcast};
 
 #[derive(Clone)]
 pub struct DaemonState {
@@ -61,12 +59,12 @@ impl DaemonState {
     pub async fn primary_snapshot(&self) -> Option<PlayerStateSnapshot> {
         let inner = self.inner.read().await;
         let id = inner.primary_id.as_ref()?;
-        inner.players.get(id).map(|p| p.snapshot())
+        inner.players.get(id).map(LivePlayer::snapshot)
     }
 
     pub async fn snapshot_for_player(&self, player_id: &str) -> Option<PlayerStateSnapshot> {
         let inner = self.inner.read().await;
-        inner.players.get(player_id).map(|p| p.snapshot())
+        inner.players.get(player_id).map(LivePlayer::snapshot)
     }
 
     pub async fn known_players(&self) -> Vec<String> {
@@ -76,6 +74,7 @@ impl DaemonState {
 
     pub async fn remove_player(&self, player_id: &str) {
         let mut inner = self.inner.write().await;
+
         if inner.players.remove(player_id).is_some()
             && inner.primary_id.as_deref() == Some(player_id)
         {
@@ -96,7 +95,7 @@ impl DaemonState {
             inner
                 .players
                 .get(id)
-                .is_some_and(|p| p.status == PlayerStatus::Playing)
+                .is_some_and(|player| player.status == PlayerStatus::Playing)
         })
     }
 
@@ -119,7 +118,7 @@ impl DaemonState {
         let mut inner = self.inner.write().await;
 
         match inner.players.get_mut(&id) {
-            Some(p) => p.apply_snapshot(snapshot, prio),
+            Some(player) => player.apply_snapshot(snapshot, prio),
             None => {
                 inner.players.insert(id.clone(), LivePlayer::new(snapshot));
             }
@@ -138,18 +137,12 @@ impl DaemonState {
     ) {
         let mut inner = self.inner.write().await;
 
-        let status_changed = if let Some(p) = inner.players.get_mut(player_id) {
-            let old_status = p.status;
-            update.apply(p, prio);
-            old_status != p.status
-        } else {
+        let Some(player) = inner.players.get_mut(player_id) else {
             return;
         };
 
-        if status_changed || inner.primary_id.is_none() {
-            inner.primary_id = pick_primary_id(&inner.players);
-        }
-
+        update.apply(player, prio);
+        inner.primary_id = pick_primary_id(&inner.players);
         self.finalize_update(inner, player_id, should_broadcast);
     }
 
@@ -160,15 +153,15 @@ impl DaemonState {
         should_broadcast: bool,
     ) {
         let snap = if should_broadcast && self.tx.receiver_count() > 0 {
-            inner.players.get(id).map(|p| p.snapshot())
+            inner.players.get(id).map(LivePlayer::snapshot)
         } else {
             None
         };
 
         drop(inner);
 
-        if let Some(s) = snap {
-            let _ = self.tx.send(s);
+        if let Some(snapshot) = snap {
+            let _ = self.tx.send(snapshot);
         }
     }
 }
@@ -186,27 +179,28 @@ pub struct PlayerUpdate {
 
 impl PlayerUpdate {
     fn apply(self, p: &mut LivePlayer, prio: ActivityPriority) {
-        if let Some(s) = self.status {
-            p.apply_status(s);
+        if let Some(status) = self.status {
+            p.apply_status(status);
         }
-        if let Some(m) = self.metadata {
-            p.apply_metadata(m);
+        if let Some(metadata) = self.metadata {
+            p.apply_metadata(metadata);
         }
-        if let Some(r) = self.rate {
-            p.rate = Some(r);
+        if let Some(rate) = self.rate {
+            p.rate = Some(rate);
         }
-        if let Some(v) = self.volume {
-            p.volume = Some(v);
+        if let Some(volume) = self.volume {
+            p.volume = Some(volume);
         }
-        if let Some(sh) = self.shuffle {
-            p.shuffle = Some(sh);
+        if let Some(shuffle) = self.shuffle {
+            p.shuffle = Some(shuffle);
         }
-        if let Some(ls) = self.loop_status {
-            p.loop_status = Some(ls);
+        if let Some(loop_status) = self.loop_status {
+            p.loop_status = Some(loop_status);
         }
-        if let Some(micros) = self.position_micros.filter(|&m| m >= 0) {
+        if let Some(micros) = self.position_micros.filter(|micros| *micros >= 0) {
             p.apply_position_update(Duration::from_micros(micros as u64));
         }
+
         p.last_activity_priority = p.last_activity_priority.max(prio);
     }
 }
