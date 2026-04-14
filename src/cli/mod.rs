@@ -90,8 +90,8 @@ pub enum Cmd {
         /// Custom output format string
         #[arg(long)]
         format: Option<String>,
-            #[command(flatten)]
-            out: OutputArgs,
+        #[command(flatten)]
+        out: OutputArgs,
     },
     /// Continuously follow player updates and stream snapshots
     Follow {
@@ -104,8 +104,8 @@ pub enum Cmd {
         /// Custom output format string
         #[arg(long)]
         format: Option<String>,
-            #[command(flatten)]
-            out: OutputArgs,
+        #[command(flatten)]
+        out: OutputArgs,
     },
     /// Send a control command (play, pause, etc.) to a player
     Command {
@@ -168,15 +168,15 @@ pub enum ControlCmd {
     },
     /// Adjust or set the playback position
     Position {
-        /// Set absolute position in microseconds
+        /// Set absolute position in seconds
         #[arg(long)]
         set: Option<u64>,
-        /// Seek forward by microseconds
+        /// Seek forward by seconds
         #[arg(long)]
         forward: Option<u64>,
-            /// Seek backward by microseconds
-            #[arg(long)]
-            backward: Option<u64>,
+        /// Seek backward by seconds
+        #[arg(long)]
+        backward: Option<u64>,
     },
     /// Manage shuffle state
     Shuffle {

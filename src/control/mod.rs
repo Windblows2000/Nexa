@@ -224,42 +224,39 @@ async fn execute_command(
             forward,
             backward,
         } => {
-            if set_to.is_none() && forward.is_none() && backward.is_none() {
-                let pos_micros = player
-                    .position()
-                    .await
-                    .context("failed to query current position")?;
-                let total_secs = (pos_micros.max(0) as f64 / 1_000_000.0).round() as u64;
+            let current_pos = player
+                .position()
+                .await
+                .context("Failed to query player position for seeking")?;
+
+            let track_id = if let Some(cached) = state.snapshot_for_player(player_id).await {
+                cached.metadata.track_id
+            } else {
+                let meta = player.metadata().await?;
+                meta.get("mpris:trackid").and_then(|v| v.try_into().ok())
+            }
+            .ok_or_else(|| anyhow!("Player has no TrackID"))?;
+
+            let track_id_path = zbus::zvariant::ObjectPath::try_from(track_id)?;
+
+            let new_pos = if let Some(sec) = set_to {
+                (*sec as i64) * 1_000_000
+            } else if let Some(sec) = forward {
+                current_pos + (*sec as i64) * 1_000_000
+            } else if let Some(sec) = backward {
+                current_pos - (*sec as i64) * 1_000_000
+            } else {
+                let total_secs = (current_pos.max(0) as f64 / 1_000_000.0).round() as u64;
                 return Ok(Some(format_duration(total_secs)));
-            }
+            };
 
-            if let Some(seconds) = forward {
-                player.seek((*seconds as i64) * 1_000_000).await?;
-            } else if let Some(seconds) = backward {
-                player.seek(-(*seconds as i64) * 1_000_000).await?;
-            } else if let Some(seconds) = set_to {
-                let track_id = if let Some(cached) = state.snapshot_for_player(player_id).await {
-                    cached.metadata.track_id
-                } else {
-                    let meta = player.metadata().await?;
-                    meta.get("mpris:trackid").and_then(|value| {
-                        let path: zbus::zvariant::ObjectPath<'_> = value.try_into().ok()?;
-                        Some(path.to_string())
-                    })
-                }
-                .ok_or_else(|| anyhow!("Player has no TrackID"))?;
-
-                let track_id = zbus::zvariant::ObjectPath::try_from(track_id)?;
-                player
-                    .set_position(track_id, (*seconds as i64) * 1_000_000)
-                    .await?;
-            }
-
+            player.set_position(track_id_path, new_pos.max(0)).await?;
             Ok(None)
         }
         Command::Shuffle { state } => {
             let cur = player.shuffle().await.unwrap_or(false);
-            let next = compute_shuffle(cur, state.unwrap_or(ShuffleState::Toggle));
+            let next =
+                compute_shuffle(cur, state.as_ref().copied().unwrap_or(ShuffleState::Toggle));
             player.set_shuffle(next).await?;
             Ok(Some(if next { "On" } else { "Off" }.to_string()))
         }
@@ -268,7 +265,7 @@ async fn execute_command(
                 .loop_status()
                 .await
                 .unwrap_or_else(|_| "None".to_string());
-            let next = compute_loop(&cur, state.unwrap_or(LoopState::Toggle));
+            let next = compute_loop(&cur, state.as_ref().copied().unwrap_or(LoopState::Toggle));
             player.set_loop_status(next.to_string()).await?;
             Ok(Some(next.to_string()))
         }
