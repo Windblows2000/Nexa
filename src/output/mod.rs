@@ -40,24 +40,27 @@ fn resolve_art_outputs(s: &PlayerSnapshotOut) -> (String, String) {
     let art_url = s.art_url.clone().unwrap_or_default();
 
     if let Some(path) = &s.art_path {
-        let path = path.display().to_string();
-        trace!(path = %path, "Using resolved art_path from daemon");
-        return (art_url, path);
+        let path_str = path.display().to_string();
+        trace!(path = %path_str, "Using resolved art_path from daemon");
+        return (art_url, path_str);
     }
 
-    if let Some(uri) = s.art_url.as_deref()
-        && uri.starts_with("file://")
-    {
-        match file_uri_to_path(uri) {
+    if art_url.starts_with("file://") {
+        match file_uri_to_path(&art_url) {
             Some(path) => {
-                let path = path.display().to_string();
-                trace!(path = %path, "Derived art_path from file:// art_url (fallback)");
-                return (art_url, path);
+                let path_str = path.display().to_string();
+                trace!(path = %path_str, "Derived art_path from file:// fallback");
+                return (art_url, path_str);
             }
             None => {
-                debug!(art_url = %uri, "Failed to convert file:// URI to path (fallback)");
+                debug!(url = %art_url, "Failed to convert file:// URI to path in fallback");
             }
         }
+    }
+
+    if art_url.starts_with("data:image/") {
+        trace!("Base64 art_url present but no resolved art_path available");
+        return ("data:image/...".to_string(), String::new());
     }
 
     trace!("No usable album art path available");

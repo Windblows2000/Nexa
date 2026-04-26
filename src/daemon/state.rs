@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
+    cache::ImageCache,
     mpris::{PlayerStateSnapshot, PlayerStatus, TrackMetadata},
     player::{ActivityPriority, LivePlayer},
 };
@@ -23,6 +24,7 @@ use tokio::sync::{RwLock, broadcast};
 
 #[derive(Clone)]
 pub struct DaemonState {
+    pub cache: ImageCache,
     inner: Arc<RwLock<Inner>>,
     tx: broadcast::Sender<PlayerStateSnapshot>,
 }
@@ -34,16 +36,11 @@ struct Inner {
     primary_id: Option<String>,
 }
 
-impl Default for DaemonState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl DaemonState {
-    pub fn new() -> Self {
+    pub fn new(cache: ImageCache) -> Self {
         let (tx, _) = broadcast::channel(256);
         Self {
+            cache,
             inner: Arc::new(RwLock::new(Inner {
                 players: HashMap::new(),
                 primary_id: None,

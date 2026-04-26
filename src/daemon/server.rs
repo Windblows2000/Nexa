@@ -49,7 +49,6 @@ impl Drop for TickDemandGuard {
 pub async fn run(
     state: SharedState,
     conn: crate::mpris::SharedConnection,
-    cache: ImageCache,
     ticker_tx: tokio::sync::watch::Sender<usize>,
 ) -> Result<()> {
     let path = socket_path();
@@ -78,11 +77,12 @@ pub async fn run(
 
         let state = state.clone();
         let conn = conn.clone();
-        let cache = cache.clone();
         let ticker_tx = ticker_tx.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_conn(state, conn, cache, ticker_tx, stream).await {
+            if let Err(e) =
+                handle_conn(state.clone(), conn.clone(), ticker_tx.clone(), stream).await
+            {
                 warn!(error = ?e, "IPC client connection error");
             }
         });
@@ -92,7 +92,7 @@ pub async fn run(
 async fn handle_conn(
     state: SharedState,
     conn: crate::mpris::SharedConnection,
-    cache: ImageCache,
+
     ticker_tx: tokio::sync::watch::Sender<usize>,
     stream: UnixStream,
 ) -> Result<()> {
@@ -112,14 +112,15 @@ async fn handle_conn(
                 };
 
                 debug!(?target, with_time, "Client entering Follow mode");
-                handle_follow(state.clone(), &cache, &mut framed, target).await?;
+                handle_follow(state.clone(), &state.cache, &mut framed, target).await?;
                 debug!("Client exited Follow mode");
                 break;
             }
 
             _ => {
                 let resp =
-                    crate::control::handle_request(req, state.clone(), conn.clone(), &cache).await;
+                    crate::control::handle_request(req, state.clone(), conn.clone(), &state.cache)
+                        .await;
                 send(&mut framed, resp).await?;
             }
         }

@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
+    cache::ImageCache,
     daemon::state::{PlayerUpdate, SharedState},
     mpris::{PlayerStatus, SharedConnection, list_players, player_from_bus, snapshot_from_player},
     player::ActivityPriority,
@@ -33,6 +34,7 @@ pub async fn run(state: SharedState, conn: SharedConnection) -> Result<()> {
         for bus in buses {
             let state = state.clone();
             let conn = conn.clone();
+            let _cache = &state.cache;
             tokio::spawn(async move {
                 if let Err(e) = monitor_player(state, conn, bus.clone()).await {
                     warn!(target: "nexa::daemon::supervisor", %bus, error = ?e, "Startup monitor exited");
@@ -54,6 +56,7 @@ pub async fn run(state: SharedState, conn: SharedConnection) -> Result<()> {
                 debug!(target: "nexa::daemon::supervisor", bus = %name, "New player detected");
                 let state = state.clone();
                 let conn = conn.clone();
+                let _cache = &state.cache;
                 let bus_id = name.to_string();
 
                 tokio::spawn(async move {
@@ -73,7 +76,12 @@ pub async fn run(state: SharedState, conn: SharedConnection) -> Result<()> {
 async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String) -> Result<()> {
     let proxy = player_from_bus(&conn, &bus).await?;
 
-    if let Ok(snap) = snapshot_from_player(&proxy).await {
+    if let Ok(mut snap) = snapshot_from_player(&proxy).await {
+        if let Some(ref art) = snap.metadata.art_url
+            && let Ok(path) = resolve_any_art(&state.cache, art).await
+        {
+            snap.metadata.art_url = Some(path.to_string_lossy().into_owned());
+        }
         state
             .upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true)
             .await;
@@ -100,7 +108,14 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
 
                 if let Some(val) = changed.get("Metadata")
                     && let Ok(dict) = <HashMap<String, Value>>::try_from(val.clone()) {
-                        update.metadata = Some(crate::mpris::parse_track_metadata(&dict));
+                        let mut meta = crate::mpris::parse_track_metadata(&dict);
+
+                        if let Some(ref art) = meta.art_url
+                            && let Ok(path) = resolve_any_art(&state.cache, art).await {
+                                meta.art_url = Some(path.to_string_lossy().into_owned());
+                            }
+
+                        update.metadata = Some(meta);
                         has_changes = true;
                     }
 
@@ -151,4 +166,14 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
 
     state.remove_player(&bus).await;
     Ok(())
+}
+
+async fn resolve_any_art(cache: &ImageCache, uri: &str) -> Result<std::path::PathBuf> {
+    if uri.starts_with("data:") {
+        cache.resolve_data_uri(uri).await
+    } else if uri.starts_with("http") {
+        cache.ensure_cached(uri).await
+    } else {
+        Ok(std::path::PathBuf::from(uri.trim_start_matches("file://")))
+    }
 }

@@ -25,7 +25,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
-use tracing::{info, instrument, warn};
+use tracing::{info, instrument, trace, warn};
 use url::Url;
 use uuid::Uuid;
 
@@ -61,6 +61,31 @@ impl ImageCache {
                 .build()?,
             in_flight: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    pub async fn resolve_data_uri(&self, data_uri: &str) -> Result<PathBuf> {
+        let stem = self.stem_for_url(data_uri);
+
+        if let Some(path) = self.cached_path(data_uri).await {
+            trace!(path = ?path, "Base64 art already exists in cache");
+            return Ok(path);
+        }
+
+        let Some(comma_pos) = data_uri.find(',') else {
+            anyhow::bail!("Invalid Data URI");
+        };
+
+        let bytes = base64_decode(&data_uri[comma_pos + 1..]);
+
+        let ext = infer::get(&bytes)
+            .map(|kind| kind.extension())
+            .unwrap_or("bin");
+
+        let final_path = self.root.join(format!("{stem}.{ext}"));
+        fs::write(&final_path, bytes).await?;
+
+        info!(path = ?final_path, "New Base64 art decoded and cached");
+        Ok(final_path)
     }
 
     pub fn root(&self) -> &Path {
@@ -246,6 +271,33 @@ impl ImageCache {
         hasher.update(url.as_bytes());
         hex::encode(hasher.finalize())
     }
+}
+
+fn base64_decode(input: &str) -> Vec<u8> {
+    let mut output = Vec::new();
+    let mut buffer = 0u32;
+    let mut bits_collected = 0;
+
+    for byte in input.bytes() {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' | b'\r' | b'\n' => continue,
+            _ => continue,
+        };
+
+        buffer = (buffer << 6) | (value as u32);
+        bits_collected += 6;
+
+        if bits_collected >= 8 {
+            bits_collected -= 8;
+            output.push((buffer >> bits_collected) as u8);
+        }
+    }
+    output
 }
 
 async fn enforce_size_limit(root: &Path) -> Result<()> {

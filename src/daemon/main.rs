@@ -60,8 +60,8 @@ async fn main() -> Result<()> {
 
     tracing::info!(%level, "starting nexa daemon");
 
-    let state = DaemonState::new();
     let cache = ImageCache::new().await?;
+    let state = DaemonState::new(cache);
 
     let conn = Connection::session().await?;
 
@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
         let conn = conn.clone();
         let ticker_tx = ticker_tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = server::run(state, conn, cache, ticker_tx).await {
+            if let Err(e) = server::run(state, conn, ticker_tx).await {
                 tracing::error!(error = %e, "ipc server crashed");
             }
         })
