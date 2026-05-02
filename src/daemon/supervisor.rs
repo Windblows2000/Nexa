@@ -23,7 +23,8 @@ use crate::{
 use anyhow::Result;
 use futures_util::StreamExt;
 use std::collections::HashMap;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
+use url::Url;
 use zbus::fdo::{DBusProxy, PropertiesProxy};
 use zbus::zvariant::Value;
 
@@ -77,11 +78,9 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
     let proxy = player_from_bus(&conn, &bus).await?;
 
     if let Ok(mut snap) = snapshot_from_player(&proxy).await {
-        if let Some(ref art) = snap.metadata.art_url
-            && let Ok(path) = resolve_any_art(&state.cache, art).await
-        {
-            snap.metadata.art_url = Some(path.to_string_lossy().into_owned());
-        }
+        snap.metadata.art_url =
+            prepare_art_url_for_state(&state.cache, snap.metadata.art_url.take()).await;
+
         state
             .upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true)
             .await;
@@ -110,10 +109,8 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
                     && let Ok(dict) = <HashMap<String, Value>>::try_from(val.clone()) {
                         let mut meta = crate::mpris::parse_track_metadata(&dict);
 
-                        if let Some(ref art) = meta.art_url
-                            && let Ok(path) = resolve_any_art(&state.cache, art).await {
-                                meta.art_url = Some(path.to_string_lossy().into_owned());
-                            }
+                        meta.art_url =
+                        prepare_art_url_for_state(&state.cache, meta.art_url.take()).await;
 
                         update.metadata = Some(meta);
                         has_changes = true;
@@ -175,5 +172,59 @@ async fn resolve_any_art(cache: &ImageCache, uri: &str) -> Result<std::path::Pat
         cache.ensure_cached(uri).await
     } else {
         Ok(std::path::PathBuf::from(uri.trim_start_matches("file://")))
+    }
+}
+async fn prewarm_art_cache(cache: &ImageCache, uri: Option<&str>) {
+    let Some(uri) = uri else {
+        return;
+    };
+
+    match resolve_any_art(cache, uri).await {
+        Ok(path) => {
+            trace!(
+                art_url = %uri,
+                art_path = ?path,
+                "Prewarmed album art cache"
+            );
+        }
+        Err(err) => {
+            trace!(
+                art_url = %uri,
+                error = %err,
+                "Failed to prewarm album art cache"
+            );
+        }
+    }
+}
+async fn prepare_art_url_for_state(cache: &ImageCache, art_url: Option<String>) -> Option<String> {
+    let uri = art_url?;
+
+    if uri.starts_with("data:") {
+        match cache.resolve_data_uri(&uri).await {
+            Ok(path) => {
+                if let Ok(file_url) = Url::from_file_path(&path) {
+                    trace!(
+                        original_len = uri.len(),
+                           art_path = ?path,
+                           art_url = %file_url,
+                           "Decoded data URI album art and canonicalized to file URL"
+                    );
+                    Some(file_url.to_string())
+                } else {
+                    warn!(
+                        art_path = ?path,
+                        "Decoded data URI album art but failed to convert path to file URL"
+                    );
+                    Some(path.to_string_lossy().into_owned())
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, original_len = uri.len(), "Failed to decode data URI album art");
+                None
+            }
+        }
+    } else {
+        prewarm_art_cache(cache, Some(&uri)).await;
+        Some(uri)
     }
 }

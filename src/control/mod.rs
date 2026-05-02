@@ -306,22 +306,47 @@ pub async fn snapshot_out(
     s: mpris::PlayerStateSnapshot,
     cache: &ImageCache,
 ) -> Result<PlayerSnapshotOut> {
-    let art_url = s.metadata.art_url.clone();
+    let mut art_url = s.metadata.art_url.clone();
 
-    let art_path = match art_url.as_deref().and_then(|u| Url::parse(u).ok()) {
-        Some(url) if url.scheme() == "file" => url
-            .to_file_path()
-            .ok()
-            .or_else(|| Some(std::path::PathBuf::from(url.path()))),
-        Some(url) if matches!(url.scheme(), "http" | "https") => {
-            let url = url.to_string();
-            if let Some(path) = cache.cached_path(&url).await {
+    let art_path = match art_url.as_deref() {
+        Some(u) if u.starts_with("data:") => {
+            let path = if let Some(path) = cache.cached_path(u).await {
                 Some(path)
             } else {
-                cache.ensure_cached(&url).await.ok()
+                cache.resolve_data_uri(u).await.ok()
+            };
+
+            if let Some(path) = &path {
+                art_url = Url::from_file_path(path)
+                    .ok()
+                    .map(|url| url.to_string())
+                    .or_else(|| Some(path.to_string_lossy().into_owned()));
+            } else {
+                art_url = None;
             }
+
+            path
         }
-        _ => None,
+
+        Some(u) => match Url::parse(u).ok() {
+            Some(url) if url.scheme() == "file" => url
+                .to_file_path()
+                .ok()
+                .or_else(|| Some(std::path::PathBuf::from(url.path()))),
+
+            Some(url) if matches!(url.scheme(), "http" | "https") => {
+                let url = url.to_string();
+                if let Some(path) = cache.cached_path(&url).await {
+                    Some(path)
+                } else {
+                    cache.ensure_cached(&url).await.ok()
+                }
+            }
+
+            _ => None,
+        },
+
+        None => None,
     };
 
     Ok(PlayerSnapshotOut {
