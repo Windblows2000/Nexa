@@ -16,7 +16,7 @@
 
 use anyhow::Result;
 use futures_util::StreamExt;
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 use std::os::unix::fs::PermissionsExt;
 use tokio::net::{UnixListener, UnixStream};
@@ -96,10 +96,21 @@ async fn handle_conn(
     ticker_tx: tokio::sync::watch::Sender<usize>,
     stream: UnixStream,
 ) -> Result<()> {
-    let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
+    let codec = LengthDelimitedCodec::builder()
+        .max_frame_length(1024 * 1024)
+        .new_codec();
 
-    while let Some(frame) = framed.next().await {
-        let bytes = frame?;
+    let mut framed = Framed::new(stream, codec);
+
+    while let Some(frame_result) = framed.next().await {
+        let bytes = match frame_result {
+            Ok(b) => b,
+            Err(e) => {
+                error!(error = ?e, "Framing error");
+                return Err(e.into());
+            }
+        };
+
         let req: Request = decode_request(&bytes)?;
         trace!(request = ?req, "Received IPC request");
 
