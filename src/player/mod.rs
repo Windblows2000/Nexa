@@ -114,12 +114,7 @@ impl LivePlayer {
 
         if track_changed {
             info!(id = %self.player_id, pos = ?snapshot.position, "Track changed, re-anchoring");
-            let pos = if snapshot.position <= Duration::from_secs(3) {
-                snapshot.position
-            } else {
-                Duration::ZERO
-            };
-            self.reanchor_position(now, pos);
+            self.reanchor_position(now, snapshot.position);
         } else if position_jumped {
             debug!(id = %self.player_id, drift = ?drift, "Seek detected, re-anchoring");
             self.reanchor_position(now, snapshot.position);
