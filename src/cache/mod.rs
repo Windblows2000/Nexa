@@ -17,7 +17,6 @@
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use futures_util::StreamExt;
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -267,9 +266,17 @@ impl ImageCache {
     }
 
     fn stem_for_url(&self, url: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(url.as_bytes());
-        hex::encode(hasher.finalize())
+        // 64-bit FNV-1a custom replacement for Sha256
+        const OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+        const PRIME: u64 = 0x100000001b3;
+
+        let mut hash = OFFSET_BASIS;
+        for &b in url.as_bytes() {
+            hash ^= b as u64;
+            hash = hash.wrapping_mul(PRIME);
+        }
+
+        format!("{hash:016x}")
     }
 }
 
