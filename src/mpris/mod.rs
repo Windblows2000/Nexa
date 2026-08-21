@@ -114,6 +114,7 @@ pub struct TrackMetadata {
     pub art_url: Option<String>,
     pub track_id: Option<String>,
     pub length: Option<Duration>,
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -147,6 +148,7 @@ pub(crate) fn parse_track_metadata(meta_map: &HashMap<String, Value<'_>>) -> Tra
     let title = meta_map.get("xesam:title").and_then(|v| v.try_into().ok());
     let album = meta_map.get("xesam:album").and_then(|v| v.try_into().ok());
     let art_url = meta_map.get("mpris:artUrl").and_then(|v| v.try_into().ok());
+    let url = meta_map.get("xesam:url").and_then(|v| v.try_into().ok());
 
     let track_id = meta_map.get("mpris:trackid").and_then(|v| {
         let p: zbus::zvariant::ObjectPath = v.try_into().ok()?;
@@ -174,6 +176,7 @@ pub(crate) fn parse_track_metadata(meta_map: &HashMap<String, Value<'_>>) -> Tra
         art_url,
         track_id,
         length,
+        url,
     }
 }
 

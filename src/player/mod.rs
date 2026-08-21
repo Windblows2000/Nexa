@@ -148,8 +148,13 @@ impl LivePlayer {
             md.track_id = self.metadata.track_id.clone();
         }
 
-        if md.track_id != self.metadata.track_id {
-            info!(id = %self.player_id, "Metadata track_id changed");
+        let track_changed = md.track_id != self.metadata.track_id
+            || md.title != self.metadata.title
+            || md.artist != self.metadata.artist
+            || md.url != self.metadata.url;
+
+        if track_changed {
+            info!(id = %self.player_id, "metadata changed");
             self.reanchor_position(now, Duration::ZERO);
         }
 

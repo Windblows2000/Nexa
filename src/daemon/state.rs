@@ -233,6 +233,23 @@ impl FollowState {
             return true;
         };
 
+        let track_changed = prev.metadata.title != next.metadata.title
+            || prev.metadata.artist != next.metadata.artist
+            || prev.metadata.url != next.metadata.url;
+
+        let state_changed = prev.player_id != next.player_id
+            || prev.status != next.status
+            || prev.metadata != next.metadata
+            || !same_f64(prev.rate, next.rate)
+            || !same_f64(prev.volume, next.volume)
+            || prev.shuffle != next.shuffle
+            || prev.loop_status != next.loop_status;
+
+        if track_changed || state_changed {
+            self.last_snapshot = Some(next.clone());
+            return true;
+        }
+
         let same_meta = prev.player_id == next.player_id
             && prev.status == next.status
             && prev.metadata == next.metadata
