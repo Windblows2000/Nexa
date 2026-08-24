@@ -124,11 +124,8 @@ pub async fn list_players(conn: &SharedConnection) -> Result<Vec<String>> {
     let dbus = zbus::fdo::DBusProxy::new(conn).await?;
     let names = dbus.list_names().await?;
 
-    let players = names
-        .into_iter()
-        .filter(|n| n.as_str().starts_with("org.mpris.MediaPlayer2."))
-        .map(|n| n.to_string())
-        .collect::<Vec<_>>();
+    let players =
+        names.into_iter().filter(|n| n.as_str().starts_with("org.mpris.MediaPlayer2.")).map(|n| n.to_string()).collect::<Vec<_>>();
 
     debug!(count = players.len(), "mpris players discovered");
     Ok(players)
@@ -215,19 +212,11 @@ pub async fn snapshot_from_player(proxy: &MprisPlayerProxy<'_>) -> Result<Player
 pub async fn player_from_bus(conn: &SharedConnection, bus: &str) -> Result<MprisPlayerProxy<'static>> {
     let bus_name = BusName::try_from(bus.to_owned()).with_context(|| format!("invalid bus name: {bus}"))?;
 
-    MprisPlayerProxy::builder(conn)
-        .destination(bus_name)?
-        .build()
-        .await
-        .context("failed to build player proxy")
+    MprisPlayerProxy::builder(conn).destination(bus_name)?.build().await.context("failed to build player proxy")
 }
 
 pub async fn root_proxy(conn: &SharedConnection, bus: &str) -> Result<MprisRootProxy<'static>> {
     let bus_name = BusName::try_from(bus.to_owned()).with_context(|| format!("invalid bus name: {bus}"))?;
 
-    MprisRootProxy::builder(conn)
-        .destination(bus_name)?
-        .build()
-        .await
-        .context("failed to build root proxy")
+    MprisRootProxy::builder(conn).destination(bus_name)?.build().await.context("failed to build root proxy")
 }

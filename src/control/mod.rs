@@ -70,9 +70,7 @@ async fn handle_request_inner(req: Request, state: SharedState, conn: mpris::Sha
                 Target::All { filter } => {
                     let ids = apply_filter(mpris::list_players(&conn).await?, filter.as_deref());
                     for id in ids {
-                        execute_command(&state, conn.clone(), &id, &cmd)
-                            .await
-                            .with_context(|| format!("command failed for {id}"))?;
+                        execute_command(&state, conn.clone(), &id, &cmd).await.with_context(|| format!("command failed for {id}"))?;
                     }
                     None
                 }
@@ -129,9 +127,7 @@ async fn get_snapshot_cached(state: &SharedState, conn: &mpris::SharedConnection
 
     let proxy = mpris::player_from_bus(conn, player_id).await?;
     let snap = mpris::snapshot_from_player(&proxy).await?;
-    state
-        .upsert_snapshot_and_broadcast(snap.clone(), crate::player::ActivityPriority::MetadataUpdate, false)
-        .await;
+    state.upsert_snapshot_and_broadcast(snap.clone(), crate::player::ActivityPriority::MetadataUpdate, false).await;
     Ok(snap)
 }
 
@@ -259,10 +255,7 @@ pub async fn snapshot_out(s: mpris::PlayerStateSnapshot, cache: &ImageCache) -> 
             let path = if let Some(path) = cache.cached_path(u).await { Some(path) } else { cache.resolve_data_uri(u).await.ok() };
 
             if let Some(path) = &path {
-                art_url = Url::from_file_path(path)
-                    .ok()
-                    .map(|url| url.to_string())
-                    .or_else(|| Some(path.to_string_lossy().into_owned()));
+                art_url = Url::from_file_path(path).ok().map(|url| url.to_string()).or_else(|| Some(path.to_string_lossy().into_owned()));
             } else {
                 art_url = None;
             }

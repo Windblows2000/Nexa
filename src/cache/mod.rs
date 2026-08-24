@@ -151,9 +151,7 @@ impl ImageCache {
 
     async fn acquire_in_flight(&self, url: &str) -> Arc<Mutex<()>> {
         let mut map = self.in_flight.lock().await;
-        let entry = map
-            .entry(url.to_owned())
-            .or_insert_with(|| InFlightEntry { lock: Arc::new(Mutex::new(())), users: 0 });
+        let entry = map.entry(url.to_owned()).or_insert_with(|| InFlightEntry { lock: Arc::new(Mutex::new(())), users: 0 });
         entry.users += 1;
         entry.lock.clone()
     }

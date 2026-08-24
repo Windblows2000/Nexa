@@ -81,11 +81,7 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
         state.upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true).await;
     }
 
-    let props_proxy = PropertiesProxy::builder(&conn)
-        .destination(bus.clone())?
-        .path("/org/mpris/MediaPlayer2")?
-        .build()
-        .await?;
+    let props_proxy = PropertiesProxy::builder(&conn).destination(bus.clone())?.path("/org/mpris/MediaPlayer2")?.build().await?;
 
     let mut property_changes = props_proxy.receive_properties_changed().await?;
     let mut seek_stream = proxy.receive_seeked().await?;

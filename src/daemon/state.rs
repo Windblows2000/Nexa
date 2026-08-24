@@ -79,10 +79,7 @@ impl DaemonState {
             return false;
         };
 
-        inner
-            .primary_id
-            .as_deref()
-            .is_some_and(|id| inner.players.get(id).is_some_and(|player| player.status == PlayerStatus::Playing))
+        inner.primary_id.as_deref().is_some_and(|id| inner.players.get(id).is_some_and(|player| player.status == PlayerStatus::Playing))
     }
 
     pub async fn rebroadcast(&self) {
@@ -177,10 +174,7 @@ fn pick_primary_id(players: &HashMap<String, LivePlayer>) -> Option<String> {
         .max_by(|(_, a), (_, b)| match (a.status == PlayerStatus::Playing, b.status == PlayerStatus::Playing) {
             (true, false) => std::cmp::Ordering::Greater,
             (false, true) => std::cmp::Ordering::Less,
-            _ => a
-                .last_activity_priority
-                .cmp(&b.last_activity_priority)
-                .then_with(|| a.last_activity.cmp(&b.last_activity)),
+            _ => a.last_activity_priority.cmp(&b.last_activity_priority).then_with(|| a.last_activity.cmp(&b.last_activity)),
         })
         .map(|(id, _)| id.clone())
 }
