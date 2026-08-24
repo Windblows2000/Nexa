@@ -47,17 +47,13 @@ struct InFlightEntry {
 
 impl ImageCache {
     pub async fn new() -> Result<Self> {
-        let proj = ProjectDirs::from("com", "windblows2000", "nexa")
-            .context("cannot determine cache dir")?;
+        let proj = ProjectDirs::from("com", "windblows2000", "nexa").context("cannot determine cache dir")?;
         let root = proj.cache_dir().join("art");
         fs::create_dir_all(&root).await?;
 
         Ok(Self {
             root,
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
-                .user_agent("nexa/1.0")
-                .build()?,
+            client: reqwest::Client::builder().timeout(Duration::from_secs(10)).user_agent("nexa/1.0").build()?,
             in_flight: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -76,9 +72,7 @@ impl ImageCache {
 
         let bytes = base64_decode(&data_uri[comma_pos + 1..]);
 
-        let ext = infer::get(&bytes)
-            .map(|kind| kind.extension())
-            .unwrap_or("bin");
+        let ext = infer::get(&bytes).map(|kind| kind.extension()).unwrap_or("bin");
 
         let final_path = self.root.join(format!("{stem}.{ext}"));
         fs::write(&final_path, bytes).await?;
@@ -157,10 +151,9 @@ impl ImageCache {
 
     async fn acquire_in_flight(&self, url: &str) -> Arc<Mutex<()>> {
         let mut map = self.in_flight.lock().await;
-        let entry = map.entry(url.to_owned()).or_insert_with(|| InFlightEntry {
-            lock: Arc::new(Mutex::new(())),
-            users: 0,
-        });
+        let entry = map
+            .entry(url.to_owned())
+            .or_insert_with(|| InFlightEntry { lock: Arc::new(Mutex::new(())), users: 0 });
         entry.users += 1;
         entry.lock.clone()
     }
@@ -185,10 +178,7 @@ impl ImageCache {
     }
 
     async fn is_valid_file(&self, path: &Path) -> bool {
-        fs::metadata(path)
-            .await
-            .map(|m| m.is_file() && m.len() > 0)
-            .unwrap_or(false)
+        fs::metadata(path).await.map(|m| m.is_file() && m.len() > 0).unwrap_or(false)
     }
 
     async fn download_to_cache(&self, url: &str, stem: &str) -> Result<PathBuf> {
@@ -241,9 +231,7 @@ impl ImageCache {
 
         drop(file);
 
-        let ext = infer::get(&sniff_buf)
-            .map(|kind| kind.extension())
-            .unwrap_or("bin");
+        let ext = infer::get(&sniff_buf).map(|kind| kind.extension()).unwrap_or("bin");
         let final_path = self.root.join(format!("{stem}.{ext}"));
 
         if let Err(err) = fs::rename(&tmp_path, &final_path).await {

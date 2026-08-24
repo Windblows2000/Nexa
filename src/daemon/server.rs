@@ -46,11 +46,7 @@ impl Drop for TickDemandGuard {
     }
 }
 
-pub async fn run(
-    state: SharedState,
-    conn: crate::mpris::SharedConnection,
-    ticker_tx: tokio::sync::watch::Sender<usize>,
-) -> Result<()> {
+pub async fn run(state: SharedState, conn: crate::mpris::SharedConnection, ticker_tx: tokio::sync::watch::Sender<usize>) -> Result<()> {
     let path = socket_path();
 
     if let Some(parent) = path.parent() {
@@ -80,9 +76,7 @@ pub async fn run(
         let ticker_tx = ticker_tx.clone();
 
         tokio::spawn(async move {
-            if let Err(e) =
-                handle_conn(state.clone(), conn.clone(), ticker_tx.clone(), stream).await
-            {
+            if let Err(e) = handle_conn(state.clone(), conn.clone(), ticker_tx.clone(), stream).await {
                 warn!(error = ?e, "IPC client connection error");
             }
         });
@@ -90,15 +84,9 @@ pub async fn run(
 }
 
 async fn handle_conn(
-    state: SharedState,
-    conn: crate::mpris::SharedConnection,
-
-    ticker_tx: tokio::sync::watch::Sender<usize>,
-    stream: UnixStream,
+    state: SharedState, conn: crate::mpris::SharedConnection, ticker_tx: tokio::sync::watch::Sender<usize>, stream: UnixStream,
 ) -> Result<()> {
-    let codec = LengthDelimitedCodec::builder()
-        .max_frame_length(1024 * 1024)
-        .new_codec();
+    let codec = LengthDelimitedCodec::builder().max_frame_length(1024 * 1024).new_codec();
 
     let mut framed = Framed::new(stream, codec);
 
@@ -116,11 +104,7 @@ async fn handle_conn(
 
         match req {
             Request::Follow { target, with_time } => {
-                let _tick_guard = if with_time {
-                    Some(TickDemandGuard::new(ticker_tx.clone()))
-                } else {
-                    None
-                };
+                let _tick_guard = if with_time { Some(TickDemandGuard::new(ticker_tx.clone())) } else { None };
 
                 debug!(?target, with_time, "Client entering Follow mode");
                 handle_follow(state.clone(), &state.cache, &mut framed, target).await?;
@@ -129,9 +113,7 @@ async fn handle_conn(
             }
 
             _ => {
-                let resp =
-                    crate::control::handle_request(req, state.clone(), conn.clone(), &state.cache)
-                        .await;
+                let resp = crate::control::handle_request(req, state.clone(), conn.clone(), &state.cache).await;
                 send(&mut framed, resp).await?;
             }
         }
@@ -141,10 +123,7 @@ async fn handle_conn(
 }
 
 async fn handle_follow(
-    state: SharedState,
-    cache: &ImageCache,
-    framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
-    target: Target,
+    state: SharedState, cache: &ImageCache, framed: &mut Framed<UnixStream, LengthDelimitedCodec>, target: Target,
 ) -> Result<()> {
     let mut rx = state.subscribe();
     let mut follow_state = crate::daemon::state::FollowState::default();
@@ -185,22 +164,12 @@ async fn handle_follow(
     Ok(())
 }
 
-async fn resolve_snapshot(
-    state: &SharedState,
-    target: &Target,
-) -> Option<crate::mpris::PlayerStateSnapshot> {
+async fn resolve_snapshot(state: &SharedState, target: &Target) -> Option<crate::mpris::PlayerStateSnapshot> {
     match target {
         Target::Player { id } => state.snapshot_for_player(id).await,
         Target::Best { filter } => {
             let snap = state.primary_snapshot().await?;
-            if let Some(f) = filter {
-                snap.player_id
-                    .to_lowercase()
-                    .contains(&f.to_lowercase())
-                    .then_some(snap)
-            } else {
-                Some(snap)
-            }
+            if let Some(f) = filter { snap.player_id.to_lowercase().contains(&f.to_lowercase()).then_some(snap) } else { Some(snap) }
         }
         Target::All { .. } => state.primary_snapshot().await,
     }
@@ -209,9 +178,8 @@ async fn resolve_snapshot(
 fn target_matches_snapshot(target: &Target, snap: &crate::mpris::PlayerStateSnapshot) -> bool {
     match target {
         Target::Player { id } => id == &snap.player_id,
-        Target::Best { filter } | Target::All { filter } => filter
-            .as_ref()
-            .map(|f| snap.player_id.to_lowercase().contains(&f.to_lowercase()))
-            .unwrap_or(true),
+        Target::Best { filter } | Target::All { filter } => {
+            filter.as_ref().map(|f| snap.player_id.to_lowercase().contains(&f.to_lowercase())).unwrap_or(true)
+        }
     }
 }

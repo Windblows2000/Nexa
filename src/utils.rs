@@ -26,15 +26,10 @@ pub fn init_logging(verbosity: u8) -> Result<()> {
     };
 
     // Respect RUST_LOG if present; otherwise fall back to verbosity setting.
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
 
     // Use try_init to avoid panicking if initialized multiple times (like in tests)
-    let _ = fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .compact()
-        .try_init();
+    let _ = fmt().with_env_filter(filter).with_target(false).compact().try_init();
 
     Ok(())
 }

@@ -58,16 +58,10 @@ pub async fn run(state: DaemonState, mut demand_rx: watch::Receiver<usize>) {
 }
 
 fn second_aligned_interval() -> Interval {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
 
     let nanos = now.subsec_nanos() as u64;
-    let delay = if nanos == 0 {
-        Duration::from_secs(1)
-    } else {
-        Duration::from_nanos(1_000_000_000 - nanos)
-    };
+    let delay = if nanos == 0 { Duration::from_secs(1) } else { Duration::from_nanos(1_000_000_000 - nanos) };
 
     interval_at(Instant::now() + delay, Duration::from_secs(1))
 }

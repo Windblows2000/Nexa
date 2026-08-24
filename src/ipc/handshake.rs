@@ -28,10 +28,6 @@ pub struct Handshake {
 
 impl Handshake {
     pub fn new(client_name: impl Into<String>) -> Self {
-        Self {
-            protocol_version: PROTOCOL_VERSION,
-            client_name: client_name.into(),
-            requested_features: Vec::new(),
-        }
+        Self { protocol_version: PROTOCOL_VERSION, client_name: client_name.into(), requested_features: Vec::new() }
     }
 }

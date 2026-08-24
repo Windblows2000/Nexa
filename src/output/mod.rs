@@ -24,11 +24,7 @@ pub fn format_duration(secs: u64) -> String {
     let minutes = (secs % 3600) / 60;
     let seconds = secs % 60;
 
-    if hours > 0 {
-        format!("{hours}:{minutes:02}:{seconds:02}")
-    } else {
-        format!("{minutes}:{seconds:02}")
-    }
+    if hours > 0 { format!("{hours}:{minutes:02}:{seconds:02}") } else { format!("{minutes}:{seconds:02}") }
 }
 
 fn file_uri_to_path(uri: &str) -> Option<PathBuf> {

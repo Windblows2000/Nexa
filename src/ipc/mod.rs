@@ -48,49 +48,32 @@ struct Envelope<T> {
     payload: T,
 }
 
-pub async fn send(
-    framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
-    resp: Response,
-) -> Result<()> {
+pub async fn send(framed: &mut Framed<UnixStream, LengthDelimitedCodec>, resp: Response) -> Result<()> {
     transport::send(framed, &resp).await
 }
 
 pub fn encode_request(req: &Request) -> anyhow::Result<Vec<u8>> {
-    let env = EnvelopeRef {
-        version: PROTOCOL_VERSION,
-        payload: req,
-    };
+    let env = EnvelopeRef { version: PROTOCOL_VERSION, payload: req };
     Ok(postcard::to_stdvec(&env)?)
 }
 
 pub fn decode_request(bytes: &[u8]) -> anyhow::Result<Request> {
     let env: Envelope<Request> = postcard::from_bytes(bytes)?;
     if env.version != PROTOCOL_VERSION {
-        anyhow::bail!(
-            "protocol mismatch: got {}, expected {}",
-            env.version,
-            PROTOCOL_VERSION
-        );
+        anyhow::bail!("protocol mismatch: got {}, expected {}", env.version, PROTOCOL_VERSION);
     }
     Ok(env.payload)
 }
 
 pub fn encode_response(resp: &Response) -> anyhow::Result<Vec<u8>> {
-    let env = EnvelopeRef {
-        version: PROTOCOL_VERSION,
-        payload: resp,
-    };
+    let env = EnvelopeRef { version: PROTOCOL_VERSION, payload: resp };
     Ok(postcard::to_stdvec(&env)?)
 }
 
 pub fn decode_response(bytes: &[u8]) -> anyhow::Result<Response> {
     let env: Envelope<Response> = postcard::from_bytes(bytes)?;
     if env.version != PROTOCOL_VERSION {
-        anyhow::bail!(
-            "protocol mismatch: got {}, expected {}",
-            env.version,
-            PROTOCOL_VERSION
-        );
+        anyhow::bail!("protocol mismatch: got {}, expected {}", env.version, PROTOCOL_VERSION);
     }
     Ok(env.payload)
 }

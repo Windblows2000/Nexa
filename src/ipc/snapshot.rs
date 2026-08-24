@@ -55,15 +55,8 @@ impl Default for Snapshot {
     fn default() -> Self {
         Self {
             playback: PlaybackState::Stopped,
-            metadata: Metadata {
-                title: None,
-                artist: None,
-                album: None,
-            },
-            volume: Volume {
-                level: 1.0,
-                muted: false,
-            },
+            metadata: Metadata { title: None, artist: None, album: None },
+            volume: Volume { level: 1.0, muted: false },
             capabilities: PlayerCapabilities { features: vec![] },
         }
     }

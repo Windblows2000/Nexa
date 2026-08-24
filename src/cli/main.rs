@@ -43,9 +43,7 @@ async fn main() -> Result<()> {
 
     let req = nexa::cli::to_request(&cli)?.expect("non-local commands must produce a request");
 
-    let stream = UnixStream::connect(socket_path())
-        .await
-        .context("daemon not running (start `nexad`)")?;
+    let stream = UnixStream::connect(socket_path()).await.context("daemon not running (start `nexad`)")?;
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
     framed.send(encode_request(&req)?.into()).await?;

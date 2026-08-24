@@ -208,36 +208,15 @@ pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
     let request = match &cli.cmd {
         Cmd::Cache { .. } | Cmd::Completions { .. } => return Ok(None),
         Cmd::Ping => Request::Ping,
-        Cmd::List { filter, .. } => Request::List {
-            filter: filter.clone(),
-        },
-        Cmd::Status { player, all, .. } => Request::Status {
-            target: target_from_args(player, *all)?,
-        },
-        Cmd::Metadata { player, all, .. } => Request::Metadata {
-            target: target_from_args(player, *all)?,
-        },
-        Cmd::Follow {
-            player,
-            all,
-            format,
-            out,
-            ..
-        } => {
-            let with_time = out.toml
-                || format
-                    .as_deref()
-                    .is_none_or(|tpl| tpl.contains("{elapsed}") || tpl.contains("{position}"));
+        Cmd::List { filter, .. } => Request::List { filter: filter.clone() },
+        Cmd::Status { player, all, .. } => Request::Status { target: target_from_args(player, *all)? },
+        Cmd::Metadata { player, all, .. } => Request::Metadata { target: target_from_args(player, *all)? },
+        Cmd::Follow { player, all, format, out, .. } => {
+            let with_time = out.toml || format.as_deref().is_none_or(|tpl| tpl.contains("{elapsed}") || tpl.contains("{position}"));
 
-            Request::Follow {
-                target: target_from_args(player, *all)?,
-                with_time,
-            }
+            Request::Follow { target: target_from_args(player, *all)?, with_time }
         }
-        Cmd::Command { player, all, cmd } => Request::Command {
-            target: target_from_args(player, *all)?,
-            cmd: control_to_ipc(cmd)?,
-        },
+        Cmd::Command { player, all, cmd } => Request::Command { target: target_from_args(player, *all)?, cmd: control_to_ipc(cmd)? },
     };
 
     Ok(Some(request))
@@ -280,11 +259,7 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 fn target_from_args(player: &str, all: bool) -> Result<Target> {
-    if all {
-        Ok(Target::All { filter: None })
-    } else {
-        parse_selector(player)
-    }
+    if all { Ok(Target::All { filter: None }) } else { parse_selector(player) }
 }
 
 fn parse_selector(s: &str) -> Result<Target> {
@@ -296,9 +271,7 @@ fn parse_selector(s: &str) -> Result<Target> {
     Ok(match kind {
         "best" => Target::Best { filter },
         "all" => Target::All { filter },
-        other => Target::Player {
-            id: other.to_string(),
-        },
+        other => Target::Player { id: other.to_string() },
     })
 }
 
@@ -320,32 +293,17 @@ fn control_to_ipc(cmd: &ControlCmd) -> Result<Command> {
         ControlCmd::Previous => Command::Previous,
         ControlCmd::Open { uri } => Command::Open { uri: uri.clone() },
         ControlCmd::Volume { set, up, down } => {
-            exactly_one_or_none(
-                [set.is_some(), up.is_some(), down.is_some()],
-                "choose at most one of --set/--up/--down",
-            )?;
+            exactly_one_or_none([set.is_some(), up.is_some(), down.is_some()], "choose at most one of --set/--up/--down")?;
 
-            Command::Volume {
-                level: *set,
-                up: *up,
-                down: *down,
-            }
+            Command::Volume { level: *set, up: *up, down: *down }
         }
-        ControlCmd::Position {
-            set,
-            forward,
-            backward,
-        } => {
+        ControlCmd::Position { set, forward, backward } => {
             exactly_one_or_none(
                 [set.is_some(), forward.is_some(), backward.is_some()],
                 "choose at most one of --set/--forward/--backward",
             )?;
 
-            Command::Position {
-                set_to: *set,
-                forward: *forward,
-                backward: *backward,
-            }
+            Command::Position { set_to: *set, forward: *forward, backward: *backward }
         }
         ControlCmd::Shuffle { on, off, toggle } => {
             let state = match (*on, *off, *toggle) {
@@ -358,11 +316,7 @@ fn control_to_ipc(cmd: &ControlCmd) -> Result<Command> {
 
             Command::Shuffle { state }
         }
-        ControlCmd::Loop {
-            none,
-            track,
-            playlist,
-        } => {
+        ControlCmd::Loop { none, track, playlist } => {
             let state = match (*none, *track, *playlist) {
                 (true, false, false) => Some(LoopState::None),
                 (false, true, false) => Some(LoopState::Track),

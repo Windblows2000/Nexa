@@ -39,14 +39,7 @@ struct Inner {
 impl DaemonState {
     pub fn new(cache: ImageCache) -> Self {
         let (tx, _) = broadcast::channel(256);
-        Self {
-            cache,
-            inner: Arc::new(RwLock::new(Inner {
-                players: HashMap::new(),
-                primary_id: None,
-            })),
-            tx,
-        }
+        Self { cache, inner: Arc::new(RwLock::new(Inner { players: HashMap::new(), primary_id: None })), tx }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<PlayerStateSnapshot> {
@@ -72,9 +65,7 @@ impl DaemonState {
     pub async fn remove_player(&self, player_id: &str) {
         let mut inner = self.inner.write().await;
 
-        if inner.players.remove(player_id).is_some()
-            && inner.primary_id.as_deref() == Some(player_id)
-        {
+        if inner.players.remove(player_id).is_some() && inner.primary_id.as_deref() == Some(player_id) {
             inner.primary_id = pick_primary_id(&inner.players);
         }
     }
@@ -88,12 +79,10 @@ impl DaemonState {
             return false;
         };
 
-        inner.primary_id.as_deref().is_some_and(|id| {
-            inner
-                .players
-                .get(id)
-                .is_some_and(|player| player.status == PlayerStatus::Playing)
-        })
+        inner
+            .primary_id
+            .as_deref()
+            .is_some_and(|id| inner.players.get(id).is_some_and(|player| player.status == PlayerStatus::Playing))
     }
 
     pub async fn rebroadcast(&self) {
@@ -105,12 +94,7 @@ impl DaemonState {
         }
     }
 
-    pub async fn upsert_snapshot_and_broadcast(
-        &self,
-        snapshot: PlayerStateSnapshot,
-        prio: ActivityPriority,
-        should_broadcast: bool,
-    ) {
+    pub async fn upsert_snapshot_and_broadcast(&self, snapshot: PlayerStateSnapshot, prio: ActivityPriority, should_broadcast: bool) {
         let id = snapshot.player_id.clone();
         let mut inner = self.inner.write().await;
 
@@ -125,13 +109,7 @@ impl DaemonState {
         self.finalize_update(inner, &id, should_broadcast);
     }
 
-    pub async fn apply_update_id_selective(
-        &self,
-        player_id: &str,
-        update: PlayerUpdate,
-        prio: ActivityPriority,
-        should_broadcast: bool,
-    ) {
+    pub async fn apply_update_id_selective(&self, player_id: &str, update: PlayerUpdate, prio: ActivityPriority, should_broadcast: bool) {
         let mut inner = self.inner.write().await;
 
         let Some(player) = inner.players.get_mut(player_id) else {
@@ -143,17 +121,8 @@ impl DaemonState {
         self.finalize_update(inner, player_id, should_broadcast);
     }
 
-    fn finalize_update(
-        &self,
-        inner: tokio::sync::RwLockWriteGuard<'_, Inner>,
-        id: &str,
-        should_broadcast: bool,
-    ) {
-        let snap = if should_broadcast && self.tx.receiver_count() > 0 {
-            inner.players.get(id).map(LivePlayer::snapshot)
-        } else {
-            None
-        };
+    fn finalize_update(&self, inner: tokio::sync::RwLockWriteGuard<'_, Inner>, id: &str, should_broadcast: bool) {
+        let snap = if should_broadcast && self.tx.receiver_count() > 0 { inner.players.get(id).map(LivePlayer::snapshot) } else { None };
 
         drop(inner);
 
@@ -205,18 +174,13 @@ impl PlayerUpdate {
 fn pick_primary_id(players: &HashMap<String, LivePlayer>) -> Option<String> {
     players
         .iter()
-        .max_by(|(_, a), (_, b)| {
-            match (
-                a.status == PlayerStatus::Playing,
-                b.status == PlayerStatus::Playing,
-            ) {
-                (true, false) => std::cmp::Ordering::Greater,
-                (false, true) => std::cmp::Ordering::Less,
-                _ => a
-                    .last_activity_priority
-                    .cmp(&b.last_activity_priority)
-                    .then_with(|| a.last_activity.cmp(&b.last_activity)),
-            }
+        .max_by(|(_, a), (_, b)| match (a.status == PlayerStatus::Playing, b.status == PlayerStatus::Playing) {
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            _ => a
+                .last_activity_priority
+                .cmp(&b.last_activity_priority)
+                .then_with(|| a.last_activity.cmp(&b.last_activity)),
         })
         .map(|(id, _)| id.clone())
 }
@@ -258,10 +222,7 @@ impl FollowState {
             && prev.shuffle == next.shuffle
             && prev.loop_status == next.loop_status;
 
-        if same_meta
-            && (prev.position.as_secs() == next.position.as_secs()
-                || next.status != PlayerStatus::Playing)
-        {
+        if same_meta && (prev.position.as_secs() == next.position.as_secs() || next.status != PlayerStatus::Playing) {
             return false;
         }
 

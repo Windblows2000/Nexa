@@ -28,12 +28,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::{trace, warn};
 use url::Url;
 
-pub async fn handle_request(
-    req: Request,
-    state: SharedState,
-    conn: mpris::SharedConnection,
-    cache: &ImageCache,
-) -> Response {
+pub async fn handle_request(req: Request, state: SharedState, conn: mpris::SharedConnection, cache: &ImageCache) -> Response {
     match handle_request_inner(req, state, conn, cache).await {
         Ok(resp) => resp,
         Err(e) => {
@@ -44,21 +39,14 @@ pub async fn handle_request(
 }
 
 pub(crate) async fn emit_snapshot(
-    framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
-    snap: crate::mpris::PlayerStateSnapshot,
-    cache: &ImageCache,
+    framed: &mut Framed<UnixStream, LengthDelimitedCodec>, snap: crate::mpris::PlayerStateSnapshot, cache: &ImageCache,
 ) -> Result<()> {
     let out = snapshot_out(snap, cache).await?;
     send(framed, Response::Metadata(Box::new(out))).await?;
     Ok(())
 }
 
-async fn handle_request_inner(
-    req: Request,
-    state: SharedState,
-    conn: mpris::SharedConnection,
-    cache: &ImageCache,
-) -> Result<Response> {
+async fn handle_request_inner(req: Request, state: SharedState, conn: mpris::SharedConnection, cache: &ImageCache) -> Result<Response> {
     trace!(?req, "Handling request");
 
     match req {
@@ -107,26 +95,14 @@ fn apply_filter(ids: Vec<String>, filter: Option<&str>) -> Vec<String> {
     };
 
     let filter = filter.to_ascii_lowercase();
-    ids.into_iter()
-        .filter(|id| id.to_ascii_lowercase().contains(&filter))
-        .collect()
+    ids.into_iter().filter(|id| id.to_ascii_lowercase().contains(&filter)).collect()
 }
 
 fn player_matches_filter(player_id: &str, filter: Option<&str>) -> bool {
-    filter
-        .map(|f| {
-            player_id
-                .to_ascii_lowercase()
-                .contains(&f.to_ascii_lowercase())
-        })
-        .unwrap_or(true)
+    filter.map(|f| player_id.to_ascii_lowercase().contains(&f.to_ascii_lowercase())).unwrap_or(true)
 }
 
-async fn resolve_one_player(
-    state: &SharedState,
-    conn: &mpris::SharedConnection,
-    target: Target,
-) -> Result<String> {
+async fn resolve_one_player(state: &SharedState, conn: &mpris::SharedConnection, target: Target) -> Result<String> {
     match target {
         Target::Player { id } => Ok(id),
         Target::Best { filter } => {
@@ -146,11 +122,7 @@ async fn resolve_one_player(
     }
 }
 
-async fn get_snapshot_cached(
-    state: &SharedState,
-    conn: &mpris::SharedConnection,
-    player_id: &str,
-) -> Result<mpris::PlayerStateSnapshot> {
+async fn get_snapshot_cached(state: &SharedState, conn: &mpris::SharedConnection, player_id: &str) -> Result<mpris::PlayerStateSnapshot> {
     if let Some(snapshot) = state.snapshot_for_player(player_id).await {
         return Ok(snapshot);
     }
@@ -158,21 +130,12 @@ async fn get_snapshot_cached(
     let proxy = mpris::player_from_bus(conn, player_id).await?;
     let snap = mpris::snapshot_from_player(&proxy).await?;
     state
-        .upsert_snapshot_and_broadcast(
-            snap.clone(),
-            crate::player::ActivityPriority::MetadataUpdate,
-            false,
-        )
+        .upsert_snapshot_and_broadcast(snap.clone(), crate::player::ActivityPriority::MetadataUpdate, false)
         .await;
     Ok(snap)
 }
 
-async fn execute_command(
-    state: &SharedState,
-    conn: mpris::SharedConnection,
-    player_id: &str,
-    cmd: &Command,
-) -> Result<Option<String>> {
+async fn execute_command(state: &SharedState, conn: mpris::SharedConnection, player_id: &str, cmd: &Command) -> Result<Option<String>> {
     let player = mpris::player_from_bus(&conn, player_id).await?;
 
     match cmd {
@@ -206,10 +169,7 @@ async fn execute_command(
             Ok(None)
         }
         Command::Volume { level, up, down } => {
-            let cur = player
-                .volume()
-                .await
-                .context("failed to query current volume")?;
+            let cur = player.volume().await.context("failed to query current volume")?;
 
             if level.is_none() && up.is_none() && down.is_none() {
                 return Ok(Some(format!("{cur:.2}")));
@@ -219,15 +179,8 @@ async fn execute_command(
             player.set_volume(new).await?;
             Ok(None)
         }
-        Command::Position {
-            set_to,
-            forward,
-            backward,
-        } => {
-            let current_pos = player
-                .position()
-                .await
-                .context("Failed to query player position for seeking")?;
+        Command::Position { set_to, forward, backward } => {
+            let current_pos = player.position().await.context("Failed to query player position for seeking")?;
 
             let track_id = if let Some(cached) = state.snapshot_for_player(player_id).await {
                 cached.metadata.track_id
@@ -255,16 +208,12 @@ async fn execute_command(
         }
         Command::Shuffle { state } => {
             let cur = player.shuffle().await.unwrap_or(false);
-            let next =
-                compute_shuffle(cur, state.as_ref().copied().unwrap_or(ShuffleState::Toggle));
+            let next = compute_shuffle(cur, state.as_ref().copied().unwrap_or(ShuffleState::Toggle));
             player.set_shuffle(next).await?;
             Ok(Some(if next { "On" } else { "Off" }.to_string()))
         }
         Command::Loop { state } => {
-            let cur = player
-                .loop_status()
-                .await
-                .unwrap_or_else(|_| "None".to_string());
+            let cur = player.loop_status().await.unwrap_or_else(|_| "None".to_string());
             let next = compute_loop(&cur, state.as_ref().copied().unwrap_or(LoopState::Toggle));
             player.set_loop_status(next.to_string()).await?;
             Ok(Some(next.to_string()))
@@ -302,19 +251,12 @@ fn compute_loop(cur: &str, state: LoopState) -> &'static str {
     }
 }
 
-pub async fn snapshot_out(
-    s: mpris::PlayerStateSnapshot,
-    cache: &ImageCache,
-) -> Result<PlayerSnapshotOut> {
+pub async fn snapshot_out(s: mpris::PlayerStateSnapshot, cache: &ImageCache) -> Result<PlayerSnapshotOut> {
     let mut art_url = s.metadata.art_url.clone();
 
     let art_path = match art_url.as_deref() {
         Some(u) if u.starts_with("data:") => {
-            let path = if let Some(path) = cache.cached_path(u).await {
-                Some(path)
-            } else {
-                cache.resolve_data_uri(u).await.ok()
-            };
+            let path = if let Some(path) = cache.cached_path(u).await { Some(path) } else { cache.resolve_data_uri(u).await.ok() };
 
             if let Some(path) = &path {
                 art_url = Url::from_file_path(path)
@@ -329,18 +271,11 @@ pub async fn snapshot_out(
         }
 
         Some(u) => match Url::parse(u).ok() {
-            Some(url) if url.scheme() == "file" => url
-                .to_file_path()
-                .ok()
-                .or_else(|| Some(std::path::PathBuf::from(url.path()))),
+            Some(url) if url.scheme() == "file" => url.to_file_path().ok().or_else(|| Some(std::path::PathBuf::from(url.path()))),
 
             Some(url) if matches!(url.scheme(), "http" | "https") => {
                 let url = url.to_string();
-                if let Some(path) = cache.cached_path(&url).await {
-                    Some(path)
-                } else {
-                    cache.ensure_cached(&url).await.ok()
-                }
+                if let Some(path) = cache.cached_path(&url).await { Some(path) } else { cache.ensure_cached(&url).await.ok() }
             }
 
             _ => None,

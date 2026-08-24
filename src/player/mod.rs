@@ -175,9 +175,7 @@ impl LivePlayer {
         debug!(id = %self.player_id, position = ?position, drift = ?drift, "Position sync");
         self.reanchor_position(now, position);
         self.last_activity = now;
-        self.last_activity_priority = self
-            .last_activity_priority
-            .max(ActivityPriority::PositionUpdate);
+        self.last_activity_priority = self.last_activity_priority.max(ActivityPriority::PositionUpdate);
     }
 
     pub fn snapshot(&self) -> PlayerStateSnapshot {

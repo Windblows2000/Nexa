@@ -24,10 +24,7 @@ use zbus::{proxy, zvariant::Value};
 
 pub type SharedConnection = zbus::Connection;
 
-#[proxy(
-    interface = "org.mpris.MediaPlayer2",
-    default_path = "/org/mpris/MediaPlayer2"
-)]
+#[proxy(interface = "org.mpris.MediaPlayer2", default_path = "/org/mpris/MediaPlayer2")]
 pub trait MprisRoot {
     fn raise(&self) -> zbus::Result<()>;
     fn quit(&self) -> zbus::Result<()>;
@@ -35,10 +32,7 @@ pub trait MprisRoot {
     fn open_uri(&self, uri: &str) -> zbus::Result<()>;
 }
 
-#[proxy(
-    interface = "org.mpris.MediaPlayer2.Player",
-    default_path = "/org/mpris/MediaPlayer2"
-)]
+#[proxy(interface = "org.mpris.MediaPlayer2.Player", default_path = "/org/mpris/MediaPlayer2")]
 pub trait MprisPlayer {
     fn play(&self) -> zbus::Result<()>;
     fn pause(&self) -> zbus::Result<()>;
@@ -47,11 +41,7 @@ pub trait MprisPlayer {
     fn next(&self) -> zbus::Result<()>;
     fn previous(&self) -> zbus::Result<()>;
     fn seek(&self, offset: i64) -> zbus::Result<()>;
-    fn set_position(
-        &self,
-        track_id: zbus::zvariant::ObjectPath<'_>,
-        position: i64,
-    ) -> zbus::Result<()>;
+    fn set_position(&self, track_id: zbus::zvariant::ObjectPath<'_>, position: i64) -> zbus::Result<()>;
 
     #[zbus(property)]
     fn playback_status(&self) -> zbus::Result<String>;
@@ -169,15 +159,7 @@ pub(crate) fn parse_track_metadata(meta_map: &HashMap<String, Value<'_>>) -> Tra
         Some(arr.join(", "))
     });
 
-    TrackMetadata {
-        title,
-        artist,
-        album,
-        art_url,
-        track_id,
-        length,
-        url,
-    }
+    TrackMetadata { title, artist, album, art_url, track_id, length, url }
 }
 
 pub async fn snapshot_from_player(proxy: &MprisPlayerProxy<'_>) -> Result<PlayerStateSnapshot> {
@@ -230,12 +212,8 @@ pub async fn snapshot_from_player(proxy: &MprisPlayerProxy<'_>) -> Result<Player
     })
 }
 
-pub async fn player_from_bus(
-    conn: &SharedConnection,
-    bus: &str,
-) -> Result<MprisPlayerProxy<'static>> {
-    let bus_name =
-        BusName::try_from(bus.to_owned()).with_context(|| format!("invalid bus name: {bus}"))?;
+pub async fn player_from_bus(conn: &SharedConnection, bus: &str) -> Result<MprisPlayerProxy<'static>> {
+    let bus_name = BusName::try_from(bus.to_owned()).with_context(|| format!("invalid bus name: {bus}"))?;
 
     MprisPlayerProxy::builder(conn)
         .destination(bus_name)?
@@ -245,8 +223,7 @@ pub async fn player_from_bus(
 }
 
 pub async fn root_proxy(conn: &SharedConnection, bus: &str) -> Result<MprisRootProxy<'static>> {
-    let bus_name =
-        BusName::try_from(bus.to_owned()).with_context(|| format!("invalid bus name: {bus}"))?;
+    let bus_name = BusName::try_from(bus.to_owned()).with_context(|| format!("invalid bus name: {bus}"))?;
 
     MprisRootProxy::builder(conn)
         .destination(bus_name)?

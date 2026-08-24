@@ -76,12 +76,9 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
     let proxy = player_from_bus(&conn, &bus).await?;
 
     if let Ok(mut snap) = snapshot_from_player(&proxy).await {
-        snap.metadata.art_url =
-            prepare_art_url_for_state(&state.cache, snap.metadata.art_url.take()).await;
+        snap.metadata.art_url = prepare_art_url_for_state(&state.cache, snap.metadata.art_url.take()).await;
 
-        state
-            .upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true)
-            .await;
+        state.upsert_snapshot_and_broadcast(snap, ActivityPriority::StatusUpdate, true).await;
     }
 
     let props_proxy = PropertiesProxy::builder(&conn)
