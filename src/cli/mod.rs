@@ -45,7 +45,7 @@ impl OutputArgs {
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 pub struct Cli {
-    /// Increase logging verbosity (can be used multiple times)
+    /// Increase logging verbosity (-v for debug, -vv for trace)
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     pub verbose: u8,
     #[command(subcommand)]

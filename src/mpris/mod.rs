@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::{debug, trace};
+use tracing::debug;
 use zbus::names::BusName;
 use zbus::{proxy, zvariant::Value};
 
@@ -182,7 +182,6 @@ pub(crate) fn parse_track_metadata(meta_map: &HashMap<String, Value<'_>>) -> Tra
 
 pub async fn snapshot_from_player(proxy: &MprisPlayerProxy<'_>) -> Result<PlayerStateSnapshot> {
     let player_id = proxy.inner().destination().to_string();
-    trace!(player_id, "capturing snapshot");
 
     let identity_feat = proxy.inner().connection().call_method(
         Some(proxy.inner().destination()),

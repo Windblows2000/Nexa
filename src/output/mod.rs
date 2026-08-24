@@ -16,7 +16,7 @@
 
 use crate::ipc::PlayerSnapshotOut;
 use std::path::PathBuf;
-use tracing::{debug, trace};
+use tracing::debug;
 use url::Url;
 
 pub fn format_duration(secs: u64) -> String {
@@ -40,17 +40,13 @@ fn resolve_art_outputs(s: &PlayerSnapshotOut) -> (String, String) {
     let art_url = s.art_url.clone().unwrap_or_default();
 
     if let Some(path) = &s.art_path {
-        let path_str = path.display().to_string();
-        trace!(path = %path_str, "Using resolved art_path from daemon");
-        return (art_url, path_str);
+        return (art_url, path.display().to_string());
     }
 
     if art_url.starts_with("file://") {
         match file_uri_to_path(&art_url) {
             Some(path) => {
-                let path_str = path.display().to_string();
-                trace!(path = %path_str, "Derived art_path from file:// fallback");
-                return (art_url, path_str);
+                return (art_url, path.display().to_string());
             }
             None => {
                 debug!(url = %art_url, "Failed to convert file:// URI to path in fallback");
@@ -59,21 +55,13 @@ fn resolve_art_outputs(s: &PlayerSnapshotOut) -> (String, String) {
     }
 
     if art_url.starts_with("data:image/") {
-        trace!("Base64 art_url present but no resolved art_path available");
         return ("data:image/...".to_string(), String::new());
     }
 
-    trace!("No usable album art path available");
     (art_url, String::new())
 }
 
 pub fn format_template(tpl: &str, s: &PlayerSnapshotOut) -> String {
-    trace!(
-        player = %s.player_id,
-        status = %s.status,
-        "Formatting template"
-    );
-
     let length = s.length.map(format_duration).unwrap_or_default();
     let elapsed = format_duration(s.elapsed);
     let rate = s.rate.map(|v| v.to_string()).unwrap_or_default();
@@ -115,7 +103,6 @@ pub fn format_template(tpl: &str, s: &PlayerSnapshotOut) -> String {
         let Some(close) = rest.find('}') else {
             out.push('{');
             out.push_str(rest);
-            trace!(output = %out, "Formatted template output");
             return out;
         };
 
@@ -132,6 +119,5 @@ pub fn format_template(tpl: &str, s: &PlayerSnapshotOut) -> String {
     }
 
     out.push_str(rest);
-    trace!(output = %out, "Formatted template output");
     out
 }

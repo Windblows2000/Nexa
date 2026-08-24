@@ -21,18 +21,20 @@ pub fn init_logging(verbosity: u8) -> Result<()> {
     let default_level = match verbosity {
         0 => "info",
         1 => "debug",
+        2 => "trace",
         _ => "trace",
     };
 
-    // Respect RUST_LOG if present; otherwise fall back to verbosity.
+    // Respect RUST_LOG if present; otherwise fall back to verbosity setting.
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
 
-    fmt()
+    // Use try_init to avoid panicking if initialized multiple times (like in tests)
+    let _ = fmt()
         .with_env_filter(filter)
         .with_target(false)
         .compact()
-        .init();
+        .try_init();
 
     Ok(())
 }

@@ -23,7 +23,7 @@ use crate::{
 use anyhow::Result;
 use futures_util::StreamExt;
 use std::collections::HashMap;
-use tracing::{debug, trace, warn};
+use tracing::{debug, warn};
 use url::Url;
 use zbus::fdo::{DBusProxy, PropertiesProxy};
 use zbus::zvariant::Value;
@@ -35,7 +35,6 @@ pub async fn run(state: SharedState, conn: SharedConnection) -> Result<()> {
         for bus in buses {
             let state = state.clone();
             let conn = conn.clone();
-            let _cache = &state.cache;
             tokio::spawn(async move {
                 if let Err(e) = monitor_player(state, conn, bus.clone()).await {
                     warn!(target: "nexa::daemon::supervisor", %bus, error = ?e, "Startup monitor exited");
@@ -57,7 +56,6 @@ pub async fn run(state: SharedState, conn: SharedConnection) -> Result<()> {
                 debug!(target: "nexa::daemon::supervisor", bus = %name, "New player detected");
                 let state = state.clone();
                 let conn = conn.clone();
-                let _cache = &state.cache;
                 let bus_id = name.to_string();
 
                 tokio::spawn(async move {
@@ -116,37 +114,37 @@ async fn monitor_player(state: SharedState, conn: SharedConnection, bus: String)
                         has_changes = true;
                     }
 
-                if let Some(val) = changed.get("PlaybackStatus")
-                    && let Ok(s) = <&str>::try_from(val) {
-                        update.status = Some(match s {
-                            "Playing" => PlayerStatus::Playing,
-                            "Paused" => PlayerStatus::Paused,
-                            _ => PlayerStatus::Stopped,
-                        });
-                        has_changes = true;
-                    }
-
-                if let Some(val) = changed.get("Volume")
-                    && let Ok(v) = f64::try_from(val) {
-                        update.volume = Some(v);
-                        has_changes = true;
-                    }
-
-                    if let Some(val) = changed.get("Shuffle")
-                        && let Ok(b) = bool::try_from(val) {
-                            update.shuffle = Some(b);
+                    if let Some(val) = changed.get("PlaybackStatus")
+                        && let Ok(s) = <&str>::try_from(val) {
+                            update.status = Some(match s {
+                                "Playing" => PlayerStatus::Playing,
+                                "Paused" => PlayerStatus::Paused,
+                                _ => PlayerStatus::Stopped,
+                            });
                             has_changes = true;
                         }
 
-                        if let Some(val) = changed.get("LoopStatus")
-                            && let Ok(s) = <&str>::try_from(val) {
-                                update.loop_status = Some(s.to_string());
+                        if let Some(val) = changed.get("Volume")
+                            && let Ok(v) = f64::try_from(val) {
+                                update.volume = Some(v);
                                 has_changes = true;
                             }
 
-                if has_changes {
-                    state.apply_update_id_selective(&bus, update, ActivityPriority::StatusUpdate, true).await;
-                }
+                            if let Some(val) = changed.get("Shuffle")
+                                && let Ok(b) = bool::try_from(val) {
+                                    update.shuffle = Some(b);
+                                    has_changes = true;
+                                }
+
+                                if let Some(val) = changed.get("LoopStatus")
+                                    && let Ok(s) = <&str>::try_from(val) {
+                                        update.loop_status = Some(s.to_string());
+                                        has_changes = true;
+                                    }
+
+                                    if has_changes {
+                                        state.apply_update_id_selective(&bus, update, ActivityPriority::StatusUpdate, true).await;
+                                    }
             }
             res = seek_stream.next() => {
                 let Some(sig) = res else { break };
@@ -174,28 +172,17 @@ async fn resolve_any_art(cache: &ImageCache, uri: &str) -> Result<std::path::Pat
         Ok(std::path::PathBuf::from(uri.trim_start_matches("file://")))
     }
 }
+
 async fn prewarm_art_cache(cache: &ImageCache, uri: Option<&str>) {
     let Some(uri) = uri else {
         return;
     };
 
-    match resolve_any_art(cache, uri).await {
-        Ok(path) => {
-            trace!(
-                art_url = %uri,
-                art_path = ?path,
-                "Prewarmed album art cache"
-            );
-        }
-        Err(err) => {
-            trace!(
-                art_url = %uri,
-                error = %err,
-                "Failed to prewarm album art cache"
-            );
-        }
+    if let Err(err) = resolve_any_art(cache, uri).await {
+        debug!(art_url = %uri, error = %err, "Failed to prewarm album art cache");
     }
 }
+
 async fn prepare_art_url_for_state(cache: &ImageCache, art_url: Option<String>) -> Option<String> {
     let uri = art_url?;
 
@@ -203,12 +190,6 @@ async fn prepare_art_url_for_state(cache: &ImageCache, art_url: Option<String>) 
         match cache.resolve_data_uri(&uri).await {
             Ok(path) => {
                 if let Ok(file_url) = Url::from_file_path(&path) {
-                    trace!(
-                        original_len = uri.len(),
-                           art_path = ?path,
-                           art_url = %file_url,
-                           "Decoded data URI album art and canonicalized to file URL"
-                    );
                     Some(file_url.to_string())
                 } else {
                     warn!(
