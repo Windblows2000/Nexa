@@ -29,11 +29,11 @@ clap_complete = "4.6.9"
 
 [[bin]]
 name = "nexa"
-path = "src/cli/main.rs"
+path = "src/bin/nexa.rs"
 
 [[bin]]
 name = "nexad"
-path = "src/daemon/main.rs"
+path = "src/bin/nexad.rs"
 
 [profile.release]
 opt-level = "z"
