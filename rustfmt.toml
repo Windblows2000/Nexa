@@ -1,0 +1,7 @@
+max_width = 140
+
+fn_params_layout = "Compressed"
+chain_width = 100
+array_width = 100
+struct_lit_width = 100
+use_small_heuristics = "Max"
