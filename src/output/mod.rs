@@ -33,28 +33,24 @@ fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
 }
 
 fn resolve_art_outputs(s: &PlayerSnapshotOut) -> (String, String) {
-    let art_url = s.art_url.clone().unwrap_or_default();
+    let art_url_str = s.art_url.as_deref().unwrap_or("");
 
     if let Some(path) = &s.art_path {
-        return (art_url, path.display().to_string());
+        return (art_url_str.to_string(), path.display().to_string());
     }
 
-    if art_url.starts_with("file://") {
-        match file_uri_to_path(&art_url) {
-            Some(path) => {
-                return (art_url, path.display().to_string());
-            }
-            None => {
-                debug!(url = %art_url, "Failed to convert file:// URI to path in fallback");
-            }
+    if art_url_str.starts_with("file://") {
+        if let Some(path) = file_uri_to_path(art_url_str) {
+            return (art_url_str.to_string(), path.display().to_string());
         }
+        debug!(url = %art_url_str, "Failed to convert file:// URI to path in fallback");
     }
 
-    if art_url.starts_with("data:image/") {
+    if art_url_str.starts_with("data:image/") {
         return ("data:image/...".to_string(), String::new());
     }
 
-    (art_url, String::new())
+    (art_url_str.to_string(), String::new())
 }
 
 pub fn format_template(tpl: &str, s: &PlayerSnapshotOut) -> String {

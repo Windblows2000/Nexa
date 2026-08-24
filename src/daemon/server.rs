@@ -34,9 +34,9 @@ struct TickDemandGuard {
 }
 
 impl TickDemandGuard {
-    fn new(tx: tokio::sync::watch::Sender<usize>) -> Self {
+    fn new(tx: &tokio::sync::watch::Sender<usize>) -> Self {
         tx.send_modify(|v| *v += 1);
-        Self { tx }
+        Self { tx: tx.clone() }
     }
 }
 
@@ -76,7 +76,7 @@ pub async fn run(state: SharedState, conn: crate::mpris::SharedConnection, ticke
         let ticker_tx = ticker_tx.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_conn(state.clone(), conn.clone(), ticker_tx.clone(), stream).await {
+            if let Err(e) = handle_conn(state, conn, ticker_tx, stream).await {
                 warn!(error = ?e, "IPC client connection error");
             }
         });
@@ -87,7 +87,6 @@ async fn handle_conn(
     state: SharedState, conn: crate::mpris::SharedConnection, ticker_tx: tokio::sync::watch::Sender<usize>, stream: UnixStream,
 ) -> Result<()> {
     let codec = LengthDelimitedCodec::builder().max_frame_length(1024 * 1024).new_codec();
-
     let mut framed = Framed::new(stream, codec);
 
     while let Some(frame_result) = framed.next().await {
@@ -104,15 +103,17 @@ async fn handle_conn(
 
         match req {
             Request::Follow { target, with_time } => {
-                let _tick_guard = if with_time { Some(TickDemandGuard::new(ticker_tx.clone())) } else { None };
+                let _tick_guard = if with_time { Some(TickDemandGuard::new(&ticker_tx)) } else { None };
 
                 debug!(?target, with_time, "Client entering Follow mode");
-                handle_follow(state.clone(), &state.cache, &mut framed, target).await?;
+                handle_follow(&state, &state.cache, &mut framed, target).await?;
                 debug!("Client exited Follow mode");
                 break;
             }
 
             _ => {
+                // Pass ownership only once per request if handle_request demands it,
+                // or clone state/conn explicitly here instead of inside the spawn layer.
                 let resp = crate::control::handle_request(req, state.clone(), conn.clone(), &state.cache).await;
                 send(&mut framed, resp).await?;
             }
@@ -123,12 +124,12 @@ async fn handle_conn(
 }
 
 async fn handle_follow(
-    state: SharedState, cache: &ImageCache, framed: &mut Framed<UnixStream, LengthDelimitedCodec>, target: Target,
+    state: &SharedState, cache: &ImageCache, framed: &mut Framed<UnixStream, LengthDelimitedCodec>, target: Target,
 ) -> Result<()> {
     let mut rx = state.subscribe();
     let mut follow_state = crate::daemon::state::FollowState::default();
 
-    if let Some(snap) = resolve_snapshot(&state, &target).await
+    if let Some(snap) = resolve_snapshot(state, &target).await
         && follow_state.should_emit(&snap)
     {
         emit_snapshot(framed, snap, cache).await?;

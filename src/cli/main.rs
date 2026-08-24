@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
                 }
             }
             Response::Position(seconds) => {
-                if let Some(mut snap) = last_snapshot.clone() {
+                if let Some(mut snap) = last_snapshot.take() {
                     snap.elapsed = seconds;
                     if let Cmd::Follow { out, format, .. } = &cli.cmd {
                         out.print(&snap, format.as_deref())?;
