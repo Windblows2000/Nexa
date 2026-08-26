@@ -107,6 +107,7 @@ or
 ```bash
 paru -S nexa-bin
 ```
+The package includes a systemd service for the daemon. Activate it with `systemctl --user enable --now nexad.service`
 
 ### Pre-built Binary
 
