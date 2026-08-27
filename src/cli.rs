@@ -41,6 +41,17 @@ impl OutputArgs {
     }
 }
 
+#[derive(Args, Debug, Clone)]
+pub struct PlayerArgs {
+    /// The player to control
+    #[arg(long, short, default_value = "best", conflicts_with = "all")]
+    pub player: String,
+
+    /// Query/control all available players
+    #[arg(long, short)]
+    pub all: bool,
+}
+
 /// A Powerful, Rust-Based CLI Linux Tool for your Media Needs.
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -56,7 +67,6 @@ pub struct Cli {
 pub enum Cmd {
     /// List all currently available MPRIS players
     List {
-        /// Optional filter string to match against player names
         #[arg(long)]
         filter: Option<String>,
         #[command(flatten)]
@@ -64,30 +74,20 @@ pub enum Cmd {
     },
     /// Generate shell completion scripts
     Completions {
-        /// The target shell for the completion script
         #[arg(value_enum)]
         shell: Shell,
     },
     /// Get the current playback status of a player
     Status {
-        /// The player to query (e.g., "best", "all", or a specific ID)
-        #[arg(long, default_value = "best", conflicts_with = "all")]
-        player: String,
-        /// Query all available players
-        #[arg(long, short)]
-        all: bool,
+        #[command(flatten)]
+        player_args: PlayerArgs,
         #[command(flatten)]
         out: OutputArgs,
     },
     /// Get full metadata for the current track
     Metadata {
-        /// The player to query
-        #[arg(long, default_value = "best", conflicts_with = "all")]
-        player: String,
-        /// Query all available players
-        #[arg(long, short)]
-        all: bool,
-        /// Custom output format string
+        #[command(flatten)]
+        player_args: PlayerArgs,
         #[arg(long)]
         format: Option<String>,
         #[command(flatten)]
@@ -95,13 +95,8 @@ pub enum Cmd {
     },
     /// Continuously follow player updates and stream snapshots
     Follow {
-        /// The player to follow
-        #[arg(long, default_value = "best", conflicts_with = "all")]
-        player: String,
-        /// Follow all available players
-        #[arg(long, short)]
-        all: bool,
-        /// Custom output format string
+        #[command(flatten)]
+        player_args: PlayerArgs,
         #[arg(long)]
         format: Option<String>,
         #[command(flatten)]
@@ -109,21 +104,15 @@ pub enum Cmd {
     },
     /// Send a control command (play, pause, etc.) to a player
     Command {
-        /// The target player for the command
-        #[arg(long, default_value = "best", conflicts_with = "all")]
-        player: String,
-        /// Send the command to all available players
-        #[arg(long, short)]
-        all: bool,
+        #[command(flatten)]
+        player_args: PlayerArgs,
         #[command(subcommand)]
         cmd: ControlCmd,
     },
-    /// Manage the local album art cache
     Cache {
         #[command(subcommand)]
         cmd: CacheCmd,
     },
-    /// Ping the nexa daemon to check connectivity
     Ping,
 }
 
@@ -209,14 +198,15 @@ pub fn to_request(cli: &Cli) -> Result<Option<Request>> {
         Cmd::Cache { .. } | Cmd::Completions { .. } => return Ok(None),
         Cmd::Ping => Request::Ping,
         Cmd::List { filter, .. } => Request::List { filter: filter.clone() },
-        Cmd::Status { player, all, .. } => Request::Status { target: target_from_args(player, *all)? },
-        Cmd::Metadata { player, all, .. } => Request::Metadata { target: target_from_args(player, *all)? },
-        Cmd::Follow { player, all, format, out, .. } => {
+        Cmd::Status { player_args, .. } => Request::Status { target: target_from_args(&player_args.player, player_args.all)? },
+        Cmd::Metadata { player_args, .. } => Request::Metadata { target: target_from_args(&player_args.player, player_args.all)? },
+        Cmd::Follow { player_args, format, out, .. } => {
             let with_time = out.toml || format.as_deref().is_none_or(|tpl| tpl.contains("{elapsed}") || tpl.contains("{position}"));
-
-            Request::Follow { target: target_from_args(player, *all)?, with_time }
+            Request::Follow { target: target_from_args(&player_args.player, player_args.all)?, with_time }
         }
-        Cmd::Command { player, all, cmd } => Request::Command { target: target_from_args(player, *all)?, cmd: control_to_ipc(cmd)? },
+        Cmd::Command { player_args, cmd } => {
+            Request::Command { target: target_from_args(&player_args.player, player_args.all)?, cmd: control_to_ipc(cmd)? }
+        }
     };
 
     Ok(Some(request))
