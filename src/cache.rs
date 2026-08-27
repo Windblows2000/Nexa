@@ -53,7 +53,10 @@ impl ImageCache {
 
         Ok(Self {
             root,
-            client: reqwest::Client::builder().timeout(Duration::from_secs(10)).user_agent(concat!("nexa/", env!("CARGO_PKG_VERSION"))).build()?,
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .user_agent(concat!("nexa/", env!("CARGO_PKG_VERSION")))
+                .build()?,
             in_flight: Arc::new(Mutex::new(HashMap::new())),
         })
     }
