@@ -36,6 +36,8 @@ pub mod snapshot;
 mod transport;
 pub mod version;
 
+pub use control::{Command, LoopState, ShuffleState};
+
 #[derive(Serialize)]
 struct EnvelopeRef<'a, T> {
     version: u16,
@@ -92,56 +94,6 @@ pub fn socket_path() -> PathBuf {
     }
 
     PathBuf::from("/tmp/nexa-daemon.sock")
-}
-
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum ShuffleState {
-    On,
-    Off,
-    Toggle,
-}
-
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum LoopState {
-    None,
-    Track,
-    Playlist,
-    Toggle,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Command {
-    Play,
-    Pause,
-    PlayPause,
-    Stop,
-    Next,
-    Previous,
-
-    Open {
-        uri: String,
-    },
-
-    /// Set absolute volume, or adjust relative.
-    Volume {
-        level: Option<f64>,
-        up: Option<f64>,
-        down: Option<f64>,
-    },
-
-    /// Seek / set position in microseconds (MPRIS units).
-    Position {
-        set_to: Option<u64>,
-        forward: Option<u64>,
-        backward: Option<u64>,
-    },
-
-    Shuffle {
-        state: Option<ShuffleState>,
-    },
-    Loop {
-        state: Option<LoopState>,
-    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

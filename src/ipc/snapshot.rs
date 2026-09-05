@@ -34,7 +34,7 @@ pub struct Metadata {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Volume {
-    pub level: f32, // 0.0 – 1.0
+    pub level: f64, // 0.0 – 1.0 (Standardized to f64)
     pub muted: bool,
 }
 
