@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use anyhow::{Context, Result};
+use base64::{Engine as _, engine::general_purpose};
 use directories::ProjectDirs;
 use futures_util::StreamExt;
 use std::{
@@ -69,11 +70,13 @@ impl ImageCache {
             return Ok(path);
         }
 
-        let Some(comma_pos) = data_uri.find(',') else {
-            anyhow::bail!("Invalid Data URI");
-        };
+        let (metadata, encoded) = data_uri.split_once(',').context("invalid data URI")?;
 
-        let bytes = base64_decode(&data_uri[comma_pos + 1..]);
+        if !metadata.contains(";base64") {
+            anyhow::bail!("data URI is not base64 encoded");
+        }
+
+        let bytes = general_purpose::STANDARD.decode(encoded).context("failed to decode base64 image data")?;
 
         let ext = infer::get(&bytes).map(|kind| kind.extension()).unwrap_or("bin");
 
@@ -267,33 +270,6 @@ impl ImageCache {
 
         format!("{hash:016x}")
     }
-}
-
-fn base64_decode(input: &str) -> Vec<u8> {
-    let mut output = Vec::new();
-    let mut buffer = 0u32;
-    let mut bits_collected = 0;
-
-    for byte in input.bytes() {
-        let value = match byte {
-            b'A'..=b'Z' => byte - b'A',
-            b'a'..=b'z' => byte - b'a' + 26,
-            b'0'..=b'9' => byte - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            b'=' | b'\r' | b'\n' => continue,
-            _ => continue,
-        };
-
-        buffer = (buffer << 6) | (value as u32);
-        bits_collected += 6;
-
-        if bits_collected >= 8 {
-            bits_collected -= 8;
-            output.push((buffer >> bits_collected) as u8);
-        }
-    }
-    output
 }
 
 async fn enforce_size_limit(root: &Path) -> Result<()> {
