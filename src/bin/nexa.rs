@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
                 Some(text) => println!("changed state to {text}"),
                 None => println!("ok"),
             },
-            Response::Pong => {}
+            Response::Pong => println!("pong"),
             Response::Error(err) => anyhow::bail!(err),
         }
 
