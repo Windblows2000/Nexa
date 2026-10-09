@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-mod cache;
 mod cleanup;
+mod core;
 mod data_uri;
 mod download;
 mod hashing;
