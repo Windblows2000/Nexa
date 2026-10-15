@@ -17,13 +17,14 @@
 use anyhow::Result;
 use futures_util::SinkExt;
 use tokio::net::UnixStream;
+use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use crate::ipc::{Response, encode_response};
 
 pub async fn send(framed: &mut Framed<UnixStream, LengthDelimitedCodec>, resp: &Response) -> Result<()> {
     let serialized = encode_response(resp)?;
-    framed.send(serialized.into()).await?;
+    framed.send(Bytes::from(serialized)).await?;
 
     Ok(())
 }

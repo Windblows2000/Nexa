@@ -22,6 +22,7 @@ use nexa::cli::{Cli, Cmd};
 use nexa::ipc::{PlayerSnapshotOut, Response, decode_response, encode_request, socket_path};
 use nexa::utils::init_logging;
 use tokio::net::UnixStream;
+use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 #[tokio::main]
@@ -46,7 +47,7 @@ async fn main() -> Result<()> {
     let stream = UnixStream::connect(socket_path()).await.context("daemon not running (start `nexad`)")?;
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
-    framed.send(encode_request(&req)?.into()).await?;
+    framed.send(Bytes::from(encode_request(&req)?)).await?;
 
     let mut last_snapshot: Option<PlayerSnapshotOut> = None;
 
